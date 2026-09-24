@@ -268,7 +268,7 @@ def render_feature_importance(explainer):
         labels={"value": "Mean |SHAP value| (log-odds scale)", "index": ""},
         title="Global feature importance",
     )
-    fig.update_layout(showlegend=False)
+    fig.update_layout(showlegend=False, margin={"l": 220}, yaxis={"automargin": True})
     st.plotly_chart(fig, use_container_width=True)
 
 

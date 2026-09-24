@@ -21,7 +21,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 4. Explainability & responsible AI | ✅ done |
 | 5. API | ✅ done |
 | 6. Dashboard | ✅ done |
-| 7. Testing & docs | ⬜ not started |
+| 7. Testing & docs | ✅ done |
 
 **Implemented vs. planned:** anything not checked off above is *planned*, not built.
 Any metric, screenshot, or claim in this README that isn't backed by code in this repo
@@ -59,14 +59,26 @@ explanations → Streamlit dashboard.
 
 ```
 student-journey-intelligence-engine/
-├── data/                  # raw/processed/external data (raw synthetic CSVs are gitignored; regenerate via script)
-├── db/                    # SQL schema and validation/transform queries
-├── src/student_journey/   # application code (data, features, models, explainability, api, dashboard)
-├── models/                # serialized trained model + preprocessing pipeline (gitignored)
-├── mlruns/                # MLflow tracking store (gitignored)
-├── tests/                 # unit + API tests
-├── docs/                  # architecture, model card, screenshots
-└── scripts/               # pipeline runner scripts
+├── Dockerfile, docker-compose.yml, .dockerignore
+├── .github/workflows/ci.yml     # lint + real pipeline run + tests, on every push/PR
+├── data/                         # raw/processed data (raw CSVs gitignored; regenerate via script)
+│   └── DATA_DICTIONARY.md
+├── db/
+│   ├── schema.sql
+│   └── queries/                  # validation.sql, transform.sql
+├── src/student_journey/
+│   ├── config.py
+│   ├── data/                     # generate_synthetic_data.py, ingest.py, validate.py
+│   ├── features/                 # build_features.py
+│   ├── models/                   # train.py, evaluate.py, predict.py
+│   ├── explainability/           # shap_utils.py
+│   ├── api/                      # main.py, schemas.py, model_loader.py
+│   └── dashboard/                # app.py
+├── models/                       # serialized model + metadata (gitignored, regenerate via train.py)
+├── mlruns/                       # MLflow tracking store (gitignored)
+├── tests/                        # 29 tests: data, features, models, explainability, API, dashboard
+├── docs/                         # architecture, model card, API examples, project summary, screenshots
+└── scripts/run_pipeline.sh       # generate -> ingest -> validate -> build_features -> train -> evaluate
 ```
 
 ## Setup
@@ -217,6 +229,41 @@ Eight tabs, each backed by real computed data (nothing hardcoded):
 **Chart design:** built with Plotly using the dataviz skill's validated reference palette (unmodified, so no re-validation needed) — status colors (green/amber/red) mapped semantically to risk categories, a single sequential hue for magnitude-only rankings, fixed (never auto-cycled) categorical hues for multi-series comparisons, and no dual-axis charts.
 
 **How this was verified without a browser:** this environment's browser tools can't reach a `localhost` server Claude starts itself, so the dashboard is tested with Streamlit's own headless harness (`streamlit.testing.v1.AppTest`), which actually executes the script end-to-end — including clicking the Predict form's submit button — and asserts on the real rendered output, not just that the file imports cleanly. Run `streamlit run` yourself locally to see it rendered.
+
+### Phase 7: testing, Docker, CI, and docs
+
+**Tests** — 29 automated tests across every phase, run with `pytest tests/ -v`:
+
+| File | Covers |
+|---|---|
+| `test_data_validation.py` | Synthetic generation, reproducibility, all 12 SQL validation checks |
+| `test_features.py` | Feature correctness, the leakage guardrail (no feature reads a future term) |
+| `test_model_training.py` | Metric computation, the time-aware split boundaries, risk-threshold bucketing |
+| `test_explainability.py` | The SHAP additivity property — exact, not approximate |
+| `test_api.py` | All 4 endpoints, input validation, graceful degradation without a model |
+| `test_dashboard.py` | All 8 tabs load without exception, the Predict form's submit path |
+
+**Docker:**
+```bash
+docker compose build
+docker compose up
+# API:       http://localhost:8000/docs
+# Dashboard: http://localhost:8501
+```
+Note: `docker compose` bind-mounts `./data`, `./db`, `./models`, and `./mlruns` into the containers, so if you've already run the pipeline locally (as the commands above do), the containers pick up your already-trained model immediately. For a clean environment with nothing run locally yet, generate everything inside a container first:
+```bash
+docker compose run --rm api bash scripts/run_pipeline.sh
+```
+**This Dockerfile/compose setup could not be built or run in the environment this project was developed in** (no Docker daemon available there) — it's written carefully against standard Docker/Compose V2 patterns and validated by static review, but you should confirm `docker compose build && docker compose up` works before relying on it, and file that as the first thing to check if something's off.
+
+**CI** ([`​.github/workflows/ci.yml`](.github/workflows/ci.yml)): on every push/PR to `main`, GitHub Actions installs dependencies, lints with `ruff`, runs the **real** pipeline (`scripts/run_pipeline.sh` — generates data, trains, evaluates) rather than relying on fixtures, then runs the full test suite. This means CI exercises XGBoost too (Linux runners have `libgomp1`, unlike this project's local macOS dev environment — see Phase 3).
+
+**Further docs:**
+- [`docs/api_examples.md`](docs/api_examples.md) — curl and Python examples for all 4 endpoints, including a verified batch-prediction example
+- [`docs/architecture.md`](docs/architecture.md) — Mermaid architecture diagram
+- [`docs/model_card.md`](docs/model_card.md) — intended use, limitations, ethical risks
+- [`docs/PROJECT_SUMMARY.md`](docs/PROJECT_SUMMARY.md) — resume bullets and interview talking points, including the calibration/risk-threshold bug found and fixed during Phase 3
+- [`docs/screenshots/`](docs/screenshots/) — confusion matrix, calibration curve, SHAP importance (all generated by `evaluate.py`/`shap_utils.py`), plus two real dashboard chart exports (`dashboard_risk_distribution.png`, `dashboard_feature_importance.png`) rendered from the dashboard's own chart-building code via Plotly/Kaleido. **Not full-page screenshots** — this environment's browser tools can't reach a `localhost` server Claude starts itself (see Phase 6), so these are real chart output rather than mockups, but you should run `streamlit run` locally to see the full page.
 
 ## Responsible use
 

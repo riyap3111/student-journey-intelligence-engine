@@ -1,0 +1,15 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+mlruns/*
+!mlruns/.gitkeep
+data/raw/*.csv
+data/processed/*
+!data/processed/.gitkeep
+models/*.joblib
+models/*.json
+db/*.db
+.DS_Store

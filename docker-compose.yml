@@ -1,0 +1,26 @@
+# Two services built from the same image (see Dockerfile), sharing the
+# data/db/models/mlruns directories via bind mounts so artifacts produced by
+# one-off pipeline runs are visible to both. Uses Compose V2 (`docker compose`,
+# no hyphen) — no top-level `version:` key needed.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./db:/app/db
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
+    command: uvicorn student_journey.api.main:app --host 0.0.0.0 --port 8000
+
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./db:/app/db
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
+    command: streamlit run src/student_journey/dashboard/app.py --server.address 0.0.0.0 --server.port 8501
