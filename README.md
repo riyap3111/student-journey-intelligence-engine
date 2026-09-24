@@ -17,7 +17,7 @@ This project is built in phases, each verified before moving to the next. Curren
 |---|---|
 | 1. Planning | ✅ done |
 | 2. Data pipeline | ✅ done |
-| 3. ML training | ⬜ not started |
+| 3. ML training | ✅ done |
 | 4. Explainability & responsible AI | ⬜ not started |
 | 5. API | ⬜ not started |
 | 6. Dashboard | ⬜ not started |
@@ -97,6 +97,44 @@ pytest tests/test_data_validation.py tests/test_features.py -v
 ```
 
 All 12 validation checks and 11 tests pass as of this commit (verified by running the above).
+
+### Phase 3: train, evaluate, and predict
+
+```bash
+export PYTHONPATH=src
+
+python -m student_journey.models.train      # trains LR + Random Forest (+ XGBoost where available), tracks with MLflow, saves models/model_pipeline.joblib
+python -m student_journey.models.evaluate    # full metric suite, confusion matrix + calibration plots, error analysis, subgroup slicing
+python -m student_journey.models.predict     # smoke-test predictions on a few real rows
+mlflow ui --backend-store-uri file:./mlruns  # optional: browse tracked runs at http://localhost:5000
+
+pytest tests/test_model_training.py -v
+```
+
+**Time-aware split** (by calendar `term_order`, not a random row split — training never sees a "future" term): train `term_order<=12` (11,457 rows), validation `13–14` (2,435 rows), test `>14` (2,782 rows).
+
+**Models compared** (validation ROC-AUC): Logistic Regression **0.764** (selected), Random Forest 0.753. XGBoost is fully implemented but requires `libomp`, which isn't installed on this dev machine (no Homebrew) — it runs in the Docker image (Phase 7, Linux) instead of locally.
+
+**Selected model — Logistic Regression, held-out test set (2,782 rows, never touched until this final evaluation):**
+
+| Metric | Value |
+|---|---|
+| Precision | 0.930 |
+| Recall | 0.790 |
+| F1 | 0.854 |
+| ROC-AUC | 0.785 |
+| Average precision | 0.951 |
+| Brier score | 0.161 |
+
+Confusion matrix and calibration curve: [`docs/screenshots/confusion_matrix.png`](docs/screenshots/confusion_matrix.png), [`docs/screenshots/calibration_curve.png`](docs/screenshots/calibration_curve.png).
+
+**Class imbalance** (~86% persisted / ~14% not, on test) is handled via `class_weight="balanced"` (LR, RF) / `scale_pos_weight` (XGBoost) rather than resampling.
+
+**A real finding worth flagging, not glossing over:** the calibration curve shows predicted probabilities running noticeably below observed persistence rates — a known side effect of `class_weight="balanced"`, which improves classification metrics on the minority class at the cost of probability calibration. Because of this, risk categories (`low`/`medium`/`high`) are **not** fixed probability cutoffs — they're percentile thresholds (60th/90th) over the model's own risk-score distribution on the validation set, saved in `models/model_metadata.json` and applied by `predict.py`. On the test set this gives a real risk gradient: low-risk students actually didn't persist 6.1% of the time, medium 23.0%, high 48.5%.
+
+**Design choice — demographic proxies excluded from model inputs:** `age_band`, `gender`, `first_gen_flag`, and `distance_from_campus_band` are synthetic fields kept in the dataset only to slice evaluation metrics by subgroup after prediction (`evaluate.py`) — they are never passed to the model as predictive features, to avoid encoding indirect discrimination into the risk score. Subgroup ROC-AUC on the test set ranges from about 0.755 to 0.818 across the demographic proxy groups; this is illustrative of the *method*, not a real-world fairness claim, since the dataset is entirely synthetic.
+
+All metrics above are copy-pasted from an actual run of the commands above, not hand-typed estimates.
 
 ## Responsible use
 
