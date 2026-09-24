@@ -12,11 +12,22 @@ Simulation design (why the target isn't leaked):
     At each term we generate that term's academic outcomes (GPA, credits,
     withdrawals, repeats) from the student's latent trajectory so far, then
     use THOSE same-term values to decide (via a logistic function + random
-    noise) whether the student enrolls in the NEXT term. The loop then
-    either continues (persisted) or stops (attrition) or stops because the
-    student graduated. This mirrors how the label must be constructed in
-    the real pipeline: strictly from future enrollment existence, never
-    from a field describing the future term itself.
+    noise) whether the student's enrollment continues at all — and, if so,
+    whether it continues immediately next term or after a stop-out gap of
+    2-3 terms before returning. The loop then either continues (immediately
+    or after a gap), stops for good (attrition), or stops because the
+    student graduated.
+
+    persisted_next_term is NOT assigned during simulation. It is computed
+    afterward, in _compute_persistence_labels, strictly from whether a row
+    exists at (student_id, term_order + 1) — i.e. enrolled in the very next
+    CALENDAR term, not just "eventually returned." A student who stops out
+    and comes back two terms later correctly gets persisted_next_term=0 on
+    the row before the gap (they did not persist to the immediate next
+    term) even though they have later rows — this is the standard
+    definition of term-over-term persistence, and it only works cleanly
+    because the label is derived from actual row adjacency after the fact
+    rather than baked in during generation.
 
 Run:
     python -m student_journey.data.generate_synthetic_data
@@ -99,11 +110,10 @@ def _simulate_enrollments(
         cumulative_credits_completed = 0
         prev_gpa = None
 
-        for term_number in range(1, max_term_number + 1):
-            term_order = row.entry_term_order + term_number - 1
-            if term_order > max_term_order:
-                break  # ran off the end of the observation calendar (right-censored)
+        term_number = 1
+        term_order = row.entry_term_order
 
+        while term_number <= max_term_number and term_order <= max_term_order:
             full_time = rng.random() < (0.72 if financial_aid_static else 0.58)
             enrollment_intensity = "full_time" if full_time else "part_time"
 
@@ -140,31 +150,16 @@ def _simulate_enrollments(
                 if rng.random() < grad_prob:
                     records.append(
                         _row(
-                            row.student_id, term_id_by_order[term_order], term_number,
+                            row.student_id, term_id_by_order[term_order], term_order, term_number,
                             enrollment_intensity, credits_attempted, credits_completed, term_gpa,
                             courses_withdrawn, courses_repeated, advising_contact_flag,
                             financial_aid_flag, is_graduating_term=1, censored_flag=0,
-                            persisted_next_term=None,
                         )
                     )
                     break
 
-            # If the next term would fall outside the generated calendar, we cannot
-            # observe whether the student would have continued — right-censor this
-            # row instead of assigning a label that no future row would back up.
-            if term_order + 1 > max_term_order:
-                records.append(
-                    _row(
-                        row.student_id, term_id_by_order[term_order], term_number,
-                        enrollment_intensity, credits_attempted, credits_completed, term_gpa,
-                        courses_withdrawn, courses_repeated, advising_contact_flag,
-                        financial_aid_flag, is_graduating_term=0, censored_flag=1,
-                        persisted_next_term=None,
-                    )
-                )
-                break
-
-            # Persistence decision: logistic function of this term's own signals.
+            # Continuation decision: logistic function of this term's own signals.
+            # p_attrition = probability the enrollment spell ends for good, here.
             risk_score = (
                 -1.4
                 + 1.1 * (2.5 - term_gpa)
@@ -178,34 +173,93 @@ def _simulate_enrollments(
                 + rng.normal(0, 0.4)
             )
             p_attrition = _sigmoid(risk_score)
-            persisted = int(rng.random() > p_attrition)
+            continues = rng.random() > p_attrition
+
+            if not continues:
+                # Permanent attrition: this is the student's last row. No future
+                # row will exist at any term_order for this student, so the
+                # post-hoc adjacency label naturally comes out to 0.
+                records.append(
+                    _row(
+                        row.student_id, term_id_by_order[term_order], term_order, term_number,
+                        enrollment_intensity, credits_attempted, credits_completed, term_gpa,
+                        courses_withdrawn, courses_repeated, advising_contact_flag,
+                        financial_aid_flag, is_graduating_term=0, censored_flag=0,
+                    )
+                )
+                break
+
+            # Among students who DO continue, a minority stop out for a term or
+            # two before returning rather than re-enrolling immediately — more
+            # likely for students already showing risk signals this term.
+            p_stopout = _sigmoid(-1.5 + 0.5 * (2.5 - term_gpa))
+            if rng.random() < p_stopout:
+                gap = int(rng.integers(2, 4))  # returns 2 or 3 terms later
+            else:
+                gap = 1
+
+            next_term_order = term_order + gap
+
+            if next_term_order > max_term_order:
+                # The planned continuation (immediate or after a gap) would fall
+                # outside the generated calendar — we cannot observe whether it
+                # actually would have happened, so right-censor this row instead
+                # of asserting a label no future row would back up.
+                records.append(
+                    _row(
+                        row.student_id, term_id_by_order[term_order], term_order, term_number,
+                        enrollment_intensity, credits_attempted, credits_completed, term_gpa,
+                        courses_withdrawn, courses_repeated, advising_contact_flag,
+                        financial_aid_flag, is_graduating_term=0, censored_flag=1,
+                    )
+                )
+                break
 
             records.append(
                 _row(
-                    row.student_id, term_id_by_order[term_order], term_number,
+                    row.student_id, term_id_by_order[term_order], term_order, term_number,
                     enrollment_intensity, credits_attempted, credits_completed, term_gpa,
                     courses_withdrawn, courses_repeated, advising_contact_flag,
                     financial_aid_flag, is_graduating_term=0, censored_flag=0,
-                    persisted_next_term=persisted,
                 )
             )
 
             prev_gpa = term_gpa
-            if not persisted:
-                break
+            term_number += 1
+            term_order = next_term_order
 
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    return _compute_persistence_labels(df)
+
+
+def _compute_persistence_labels(enrollments: pd.DataFrame) -> pd.DataFrame:
+    """Derive persisted_next_term strictly from row adjacency: 1 iff a row
+    exists for this student at term_order + 1, else 0 — then overridden to
+    NULL for graduating/censored rows, which are excluded from the labeled
+    population entirely. Computed once, after all rows exist, so it can't
+    drift out of sync with what rows actually got generated (see the
+    stop-out-gap case in the module docstring)."""
+    existing = set(zip(enrollments["student_id"], enrollments["term_order"]))
+
+    def label(r):
+        if r["is_graduating_term"] == 1 or r["censored_flag"] == 1:
+            return None
+        return 1 if (r["student_id"], r["term_order"] + 1) in existing else 0
+
+    enrollments = enrollments.copy()
+    enrollments["persisted_next_term"] = enrollments.apply(label, axis=1)
+    return enrollments.drop(columns=["term_order"])
 
 
 def _row(
-    student_id, term_id, term_number, enrollment_intensity, credits_attempted,
+    student_id, term_id, term_order, term_number, enrollment_intensity, credits_attempted,
     credits_completed, term_gpa, courses_withdrawn, courses_repeated,
     advising_contact_flag, financial_aid_flag, is_graduating_term, censored_flag,
-    persisted_next_term,
 ) -> dict:
     return {
         "student_id": student_id,
         "term_id": term_id,
+        "term_order": term_order,  # dropped from the final CSV in _compute_persistence_labels
         "term_number": term_number,
         "enrollment_intensity": enrollment_intensity,
         "credits_attempted": credits_attempted,
@@ -217,7 +271,6 @@ def _row(
         "financial_aid_flag": financial_aid_flag,
         "is_graduating_term": is_graduating_term,
         "censored_flag": censored_flag,
-        "persisted_next_term": persisted_next_term,
     }
 
 

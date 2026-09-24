@@ -1,19 +1,26 @@
 """Tests for SHAP-based explainability: the additivity property that makes
 these explanations trustworthy (base_value + sum(shap_values) reproduces the
-model's own raw score exactly, for the linear model), and basic sanity of
-the per-prediction and global explanation outputs.
+BASE model's own raw score exactly), and basic sanity of the per-prediction
+and global explanation outputs.
+
+Note: SHAP explains the base (uncalibrated) pipeline's decision — the saved
+model_pipeline.joblib is a CalibratedClassifierCV wrapping it (see train.py's
+calibration comment), and predict_proba on that calibrated wrapper is
+deliberately a DIFFERENT number (properly calibrated) from what SHAP
+reconstructs here. That's correct by design, not a bug — see
+PersistenceExplainer's module docstring.
 
 Requires a trained model at models/model_pipeline.joblib — run
 `python -m student_journey.models.train` first if these are skipped/failing
 for that reason.
 """
+import numpy as np
 import pandas as pd
 import pytest
 from scipy.special import expit
 
 from student_journey.config import DB_PATH, FEATURES_TABLE
-from student_journey.explainability.shap_utils import PersistenceExplainer
-from student_journey.models.predict import PersistenceModel
+from student_journey.explainability.shap_utils import PersistenceExplainer, _encode_categoricals
 from student_journey.models.train import FEATURE_COLUMNS, MODELS_DIR
 
 pytestmark = pytest.mark.skipif(
@@ -36,20 +43,35 @@ def explainer():
     return PersistenceExplainer()
 
 
-def test_shap_values_reconstruct_model_probability(sample_records, explainer):
-    """The core trust property: for the linear model, base_value + sum of
-    the UNAGGREGATED shap values must equal the raw decision function, and
-    its sigmoid must equal predict_proba — not an approximation."""
-    model = PersistenceModel()
+def test_shap_values_reconstruct_base_model_probability(sample_records, explainer):
+    """The core trust property: base_value + sum of the UNAGGREGATED shap
+    values must reconstruct the BASE (pre-calibration) model's own
+    predict_proba exactly — not an approximation — respecting whichever
+    score_scale was actually detected for this model type (see
+    PersistenceExplainer._detect_score_scale)."""
     for record in sample_records:
         raw_df = pd.DataFrame([record])[FEATURE_COLUMNS]
-        transformed = explainer.preprocessor.transform(raw_df)
-        explanation = explainer.explainer(transformed)
+        if explainer.is_ensemble:
+            # No single preprocessor for a soft-voting ensemble — see
+            # PersistenceExplainer's ensemble branch. Categoricals are coded
+            # numerically because SHAP's masker can't handle raw strings.
+            model_input = _encode_categoricals(raw_df)
+            actual_prob = float(explainer._ensemble_predict_proba(model_input)[0, 1])
+        else:
+            model_input = explainer.preprocessor.transform(raw_df)
+            actual_prob = float(explainer.classifier.predict_proba(model_input)[0, 1])
 
-        reconstructed_logit = float(explanation.base_values[0]) + float(explanation.values[0].sum())
-        reconstructed_prob = expit(reconstructed_logit)
+        explanation = explainer.explainer(model_input, silent=True)
 
-        actual_prob = model.pipeline.predict_proba(raw_df)[0, 1]
+        values, base = explanation.values[0], explanation.base_values[0]
+        if values.ndim > 1:  # (n_features, n_classes) — take the positive class
+            values = values[:, 1]
+            base = np.asarray(base).reshape(-1)[1] if hasattr(base, "__len__") else base
+        raw_reconstruction = float(base) + float(values.sum())
+
+        reconstructed_prob = (
+            expit(raw_reconstruction) if explainer.score_scale == "log_odds" else raw_reconstruction
+        )
         assert reconstructed_prob == pytest.approx(actual_prob, abs=1e-6)
 
 

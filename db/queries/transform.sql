@@ -46,12 +46,15 @@ SELECT
     e.advising_contact_flag,
     e.financial_aid_flag,
 
-    -- Whether the student has any row for the immediately preceding
-    -- term_number. In the current generator every student enrolls in
-    -- consecutive term_numbers with no simulated gap-and-return, so this is
-    -- 0 only for a student's first term; a gap-term simulation is a planned
-    -- future enhancement that would make this feature more informative.
-    CASE WHEN LAG(e.term_number) OVER w_ord IS NOT NULL THEN 1 ELSE 0 END AS prior_term_enrolled_flag,
+    -- Whether the student has a row at the immediately preceding CALENDAR
+    -- term (term_order - 1), not just the preceding term_number. Students
+    -- can stop out for a term or two and return (see
+    -- generate_synthetic_data.py), so this is genuinely informative: 0 for
+    -- a student's first term OR a term right after returning from a gap;
+    -- 1 for consecutive enrollment. Computed via a self-join on terms
+    -- (term_order - 1) rather than LAG, since LAG over term_number would
+    -- treat a post-gap return as "consecutive" when it isn't.
+    CASE WHEN e_prev.student_id IS NOT NULL THEN 1 ELSE 0 END AS prior_term_enrolled_flag,
 
     e.is_graduating_term,
     e.censored_flag,
@@ -60,6 +63,8 @@ SELECT
 FROM enrollments e
 JOIN students s ON e.student_id = s.student_id
 JOIN terms t ON e.term_id = t.term_id
+LEFT JOIN terms t_prev ON t_prev.term_order = t.term_order - 1
+LEFT JOIN enrollments e_prev ON e_prev.student_id = e.student_id AND e_prev.term_id = t_prev.term_id
 WINDOW
     w_ord AS (PARTITION BY e.student_id ORDER BY e.term_number),
     w_cum AS (PARTITION BY e.student_id ORDER BY e.term_number

@@ -90,7 +90,9 @@ class StudentTermFeatures(BaseModel):
 
 class ContributingFactor(BaseModel):
     feature: str
-    contribution: float = Field(..., description="Signed contribution on the model's log-odds scale")
+    contribution: float = Field(
+        ..., description="Signed contribution on the model's own additive score — see score_scale for units"
+    )
     direction: Literal["increases_persistence_likelihood", "increases_risk"]
 
 
@@ -98,6 +100,13 @@ class PredictionResponse(BaseModel):
     persistence_probability: float = Field(..., description="Model's estimated probability the student persists")
     risk_probability: float = Field(..., description="1 - persistence_probability")
     risk_category: Literal["low", "medium", "high"]
+    score_scale: Literal["log_odds", "probability"] = Field(
+        ...,
+        description=(
+            "Units of top_contributing_factors' contribution values. Detected per model type, not assumed — "
+            "log_odds for the linear model, or probability for some tree-ensemble explainers."
+        ),
+    )
     top_contributing_factors: list[ContributingFactor]
     model_version: str
     disclaimer: str = API_DISCLAIMER

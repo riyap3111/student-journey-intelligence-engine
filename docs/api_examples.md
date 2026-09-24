@@ -7,6 +7,21 @@ uvicorn student_journey.api.main:app --reload --port 8000
 ```
 Interactive docs (try requests in the browser): http://localhost:8000/docs
 
+## Authentication and rate limits (added in Phase 8)
+
+`/predict` and `/batch_predict` require an `X-API-Key` header **only if** the `STUDENT_JOURNEY_API_KEY`
+environment variable is set on the server — unset (this project's local-dev default) means no auth is
+enforced. If it's set and you omit or get the header wrong, you get `401`:
+```bash
+export STUDENT_JOURNEY_API_KEY=my-secret-key   # server-side, before starting uvicorn
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8000/predict -d '{}'
+# 401
+curl -s -X POST http://localhost:8000/predict -H "X-API-Key: my-secret-key" -d '{...}'
+# 200 (with a valid body)
+```
+Both endpoints are also rate-limited per client IP (`/predict` 60/minute, `/batch_predict` 20/minute,
+the latter lower since it does more work per request) — exceeding the limit returns `429`.
+
 ## GET /health
 
 ```bash
@@ -55,21 +70,22 @@ curl -s -X POST http://localhost:8000/predict \
 ```
 ```json
 {
-  "persistence_probability": 0.3385,
-  "risk_probability": 0.6615,
+  "persistence_probability": 0.506976647272203,
+  "risk_probability": 0.49302335272779696,
   "risk_category": "medium",
+  "score_scale": "probability",
   "top_contributing_factors": [
-    {"feature": "term_gpa", "contribution": -0.7221, "direction": "increases_risk"},
-    {"feature": "advising_contact_flag", "contribution": -0.3303, "direction": "increases_risk"},
-    {"feature": "courses_withdrawn", "contribution": -0.2975, "direction": "increases_risk"},
-    {"feature": "financial_aid_flag", "contribution": 0.1917, "direction": "increases_persistence_likelihood"},
-    {"feature": "credits_attempted", "contribution": 0.1638, "direction": "increases_persistence_likelihood"}
+    {"feature": "term_gpa", "contribution": -0.0925, "direction": "increases_risk"},
+    {"feature": "advising_contact_flag", "contribution": -0.0252, "direction": "increases_risk"},
+    {"feature": "courses_withdrawn", "contribution": -0.0249, "direction": "increases_risk"},
+    {"feature": "cumulative_gpa", "contribution": -0.017, "direction": "increases_risk"},
+    {"feature": "cumulative_credit_completion_rate", "contribution": -0.0164, "direction": "increases_risk"}
   ],
-  "model_version": "20260924-065958",
+  "model_version": "20260924-081650",
   "disclaimer": "..."
 }
 ```
-This is real output from an actual request against a running server — see the Phase 5 section of the main README.
+This is real output from an actual request against a running (Phase 8) server — the currently-selected model is a soft-voting ensemble, whose SHAP contributions are on the `probability` scale (detected empirically per model type — see the Phase 8 section of the main README); a linear model's contributions would instead be on the `log_odds` scale, and `score_scale` tells you which you got without guessing.
 
 **Invalid input** (unknown `program`, or `term_gpa` outside `[0, 4]`) returns `422` with a field-level Pydantic error, e.g.:
 ```bash
@@ -112,6 +128,14 @@ curl -s -X POST http://localhost:8000/batch_predict \
   }' | python3 -m json.tool
 ```
 Each item in `predictions` echoes back its `record_id` for matching against the request, and the higher-GPA example ("example-2") predicts a lower risk probability than the first — a basic sanity property asserted directly in `tests/test_api.py::test_batch_predict_echoes_record_ids`.
+
+## GET /metrics (added in Phase 8)
+
+```bash
+curl -s http://localhost:8000/metrics | head -20
+```
+Prometheus-format text (request counts, latency histograms, standard Python process metrics) via
+`prometheus-fastapi-instrumentator` — point a Prometheus scraper at this in a real deployment.
 
 ## Python (requests)
 

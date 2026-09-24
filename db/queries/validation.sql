@@ -52,14 +52,6 @@ WHERE term_gpa IS NULL
    OR credits_completed IS NULL
    OR enrollment_intensity IS NULL;
 
--- CHECK: label_leakage_missing_next_row | persisted_next_term=1 with no matching next-term row (label unfalsifiable)
-SELECT e1.student_id, e1.term_id, e1.term_number
-FROM enrollments e1
-LEFT JOIN enrollments e2
-  ON e1.student_id = e2.student_id AND e2.term_number = e1.term_number + 1
-WHERE e1.persisted_next_term = 1
-  AND e2.student_id IS NULL;
-
 -- CHECK: graduating_or_censored_has_label | graduating/censored rows must have a NULL target (excluded from training)
 SELECT student_id, term_id, is_graduating_term, censored_flag, persisted_next_term
 FROM enrollments
@@ -73,9 +65,20 @@ WHERE is_graduating_term = 0
   AND censored_flag = 0
   AND persisted_next_term IS NULL;
 
--- CHECK: dropped_student_has_later_rows | a student whose row says persisted=0 should have no rows after it
-SELECT e1.student_id, e1.term_number AS dropped_at, e2.term_number AS later_row
-FROM enrollments e1
-JOIN enrollments e2
-  ON e1.student_id = e2.student_id AND e2.term_number > e1.term_number
-WHERE e1.persisted_next_term = 0;
+-- CHECK: label_matches_term_order_adjacency | persisted_next_term must exactly equal whether a row exists at term_order+1, in both directions.
+-- (Students can stop out for a term or two and return later — see generate_synthetic_data.py —
+-- so "persisted_next_term=0" no longer means "no future rows at all," only "no row at the
+-- immediate next calendar term." This single bidirectional check is the real invariant.)
+WITH e AS (
+    SELECT en.student_id, en.term_id, en.persisted_next_term, t.term_order
+    FROM enrollments en
+    JOIN terms t ON en.term_id = t.term_id
+)
+SELECT e1.student_id, e1.term_id, e1.term_order, e1.persisted_next_term
+FROM e e1
+LEFT JOIN e e2 ON e1.student_id = e2.student_id AND e2.term_order = e1.term_order + 1
+WHERE e1.persisted_next_term IS NOT NULL
+  AND (
+        (e1.persisted_next_term = 1 AND e2.student_id IS NULL)
+     OR (e1.persisted_next_term = 0 AND e2.student_id IS NOT NULL)
+  );

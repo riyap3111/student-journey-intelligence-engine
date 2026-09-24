@@ -1,10 +1,19 @@
-"""Train baseline (Logistic Regression), Random Forest, and XGBoost models to
-predict `persisted_next_term`, using a time-aware split, MLflow tracking, and
-class-imbalance handling. Selects the best model by validation ROC-AUC, does
-one final unbiased evaluation on the held-out test set, and saves the winning
-pipeline + metadata to models/.
+"""Train Logistic Regression, Random Forest, and XGBoost models to predict
+`persisted_next_term`, using a time-aware split, Optuna hyperparameter
+tuning, MLflow tracking, class-imbalance handling, and a soft-voting
+ensemble over the tuned models as an additional candidate. Selects the best
+model by validation ROC-AUC, calibrates it, does one final unbiased
+evaluation on the held-out test set, and saves the winning pipeline +
+metadata to models/.
 
 Design decisions (documented here so they're not just implicit in code):
+
+  - Each model type is tuned with Optuna (see N_TUNING_TRIALS) before
+    comparison — maximizing validation ROC-AUC, the same metric used for
+    final model selection, so tuning optimizes exactly what the comparison
+    cares about. A soft-voting ensemble over the tuned models is evaluated
+    as one more candidate; it wins only if it genuinely beats every
+    individual tuned model on validation ROC-AUC.
 
   - Time-aware split by `term_order` (the calendar sequence), NOT a random
     row split. Train on earlier terms, validate and test on strictly later
@@ -47,9 +56,11 @@ import joblib
 import mlflow
 import mlflow.sklearn
 import numpy as np
+import optuna
 import pandas as pd
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -64,6 +75,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from student_journey.config import DB_PATH, FEATURES_TABLE, MLRUNS_DIR, MODELS_DIR, RANDOM_SEED
+
+optuna.logging.set_verbosity(optuna.logging.WARNING)  # keep console output focused on our own prints, not per-trial spam
 
 try:
     from xgboost import XGBClassifier
@@ -124,42 +137,82 @@ def build_preprocessor() -> ColumnTransformer:
     )
 
 
-def build_candidate_models(scale_pos_weight: float) -> dict[str, Pipeline]:
-    models = {
-        "logistic_regression": Pipeline([
-            ("preprocessor", build_preprocessor()),
-            ("classifier", LogisticRegression(
-                class_weight="balanced", max_iter=1000, random_state=RANDOM_SEED
-            )),
-        ]),
-        "random_forest": Pipeline([
-            ("preprocessor", build_preprocessor()),
-            ("classifier", RandomForestClassifier(
-                n_estimators=300, max_depth=8, class_weight="balanced",
-                random_state=RANDOM_SEED, n_jobs=-1,
-            )),
-        ]),
-    }
-
-    if XGBOOST_AVAILABLE:
-        models["xgboost"] = Pipeline([
-            ("preprocessor", build_preprocessor()),
-            ("classifier", XGBClassifier(
-                n_estimators=300, max_depth=5, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8,
-                scale_pos_weight=scale_pos_weight,
-                eval_metric="logloss", random_state=RANDOM_SEED, n_jobs=-1,
-            )),
-        ])
-    else:
-        print(
-            f"\n[warning] Skipping XGBoost — native library failed to load "
-            f"in this environment ({_XGBOOST_IMPORT_ERROR!r}). "
-            "It will run in the Docker image (Phase 7). Continuing with "
-            "Logistic Regression and Random Forest only.\n"
+def _build_pipeline(model_type: str, params: dict, scale_pos_weight: float) -> Pipeline:
+    """Construct an unfitted preprocessor+classifier pipeline for model_type
+    with the given hyperparameters. Shared by the Optuna objective (many
+    throwaway fits) and the final best-params fit, so there's exactly one
+    place that knows how to turn a model_type + params dict into a pipeline.
+    """
+    if model_type == "logistic_regression":
+        classifier = LogisticRegression(
+            C=params["C"], class_weight="balanced", max_iter=1000, random_state=RANDOM_SEED
         )
+    elif model_type == "random_forest":
+        classifier = RandomForestClassifier(
+            n_estimators=params["n_estimators"], max_depth=params["max_depth"],
+            min_samples_leaf=params["min_samples_leaf"], max_features=params["max_features"],
+            class_weight="balanced", random_state=RANDOM_SEED, n_jobs=-1,
+        )
+    elif model_type == "xgboost":
+        classifier = XGBClassifier(
+            n_estimators=params["n_estimators"], max_depth=params["max_depth"],
+            learning_rate=params["learning_rate"], subsample=params["subsample"],
+            colsample_bytree=params["colsample_bytree"], scale_pos_weight=scale_pos_weight,
+            eval_metric="logloss", random_state=RANDOM_SEED, n_jobs=-1,
+        )
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
+    return Pipeline([("preprocessor", build_preprocessor()), ("classifier", classifier)])
 
-    return models
+
+def _suggest_params(trial: optuna.Trial, model_type: str) -> dict:
+    if model_type == "logistic_regression":
+        return {"C": trial.suggest_float("C", 1e-3, 1e2, log=True)}
+    if model_type == "random_forest":
+        return {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 500, step=50),
+            "max_depth": trial.suggest_int("max_depth", 3, 20),
+            "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 10),
+            "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", None]),
+        }
+    if model_type == "xgboost":
+        return {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 500, step=50),
+            "max_depth": trial.suggest_int("max_depth", 3, 10),
+            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+            "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+        }
+    raise ValueError(f"Unknown model_type: {model_type}")
+
+
+N_TUNING_TRIALS = {"logistic_regression": 15, "random_forest": 25, "xgboost": 25}
+
+
+def tune_model(model_type: str, X_train, y_train, X_val, y_val, scale_pos_weight: float, n_trials: int):
+    """Optuna search over model_type's hyperparameters, maximizing validation
+    ROC-AUC — the same metric used for model selection, so tuning optimizes
+    exactly what the comparison downstream cares about. Returns
+    (fitted_pipeline_with_best_params, best_params_dict)."""
+
+    def objective(trial: optuna.Trial) -> float:
+        params = _suggest_params(trial, model_type)
+        pipeline = _build_pipeline(model_type, params, scale_pos_weight)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            pipeline.fit(X_train, y_train)
+            val_prob = pipeline.predict_proba(X_val)[:, 1]
+        return roc_auc_score(y_val, val_prob)
+
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED))
+    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+
+    best_pipeline = _build_pipeline(model_type, study.best_params, scale_pos_weight)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        best_pipeline.fit(X_train, y_train)
+
+    return best_pipeline, study.best_params
 
 
 def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5) -> dict:
@@ -196,10 +249,26 @@ def main() -> None:
     mlflow.set_tracking_uri(f"file:{MLRUNS_DIR}")
     mlflow.set_experiment("student_persistence")
 
-    models = build_candidate_models(scale_pos_weight)
-    val_results = {}
+    model_types = ["logistic_regression", "random_forest"]
+    if XGBOOST_AVAILABLE:
+        model_types.append("xgboost")
+    else:
+        print(
+            f"\n[warning] Skipping XGBoost — native library failed to load "
+            f"in this environment ({_XGBOOST_IMPORT_ERROR!r}). "
+            "It will run in the Docker image (Phase 7). Continuing with "
+            "Logistic Regression and Random Forest only.\n"
+        )
 
-    for name, pipeline in models.items():
+    val_results = {}
+    tuned_members = {}  # {name: fitted_pipeline}, feeds the ensemble below
+
+    for name in model_types:
+        n_trials = N_TUNING_TRIALS[name]
+        print(f"\nTuning {name} ({n_trials} Optuna trials, optimizing validation ROC-AUC)...")
+        pipeline, best_params = tune_model(name, X_train, y_train, X_val, y_val, scale_pos_weight, n_trials)
+        print(f"  best_params: {best_params}")
+
         with mlflow.start_run(run_name=name):
             # LogisticRegression's lbfgs solver emits benign transient
             # RuntimeWarnings (matmul overflow) while exploring large
@@ -209,11 +278,12 @@ def main() -> None:
             # left to look like a real data bug in the console output.
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
-                pipeline.fit(X_train, y_train)
                 val_prob = pipeline.predict_proba(X_val)[:, 1]
             metrics = compute_metrics(y_val, val_prob)
 
             mlflow.log_param("model_type", name)
+            mlflow.log_param("tuning_trials", n_trials)
+            mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
             mlflow.log_param("train_rows", len(X_train))
             mlflow.log_param("val_rows", len(X_val))
             mlflow.log_metrics({
@@ -222,8 +292,33 @@ def main() -> None:
             })
             mlflow.sklearn.log_model(pipeline, artifact_path="model")
 
-            val_results[name] = {"pipeline": pipeline, "metrics": metrics, "val_prob": val_prob}
+            val_results[name] = {
+                "pipeline": pipeline, "metrics": metrics, "val_prob": val_prob, "best_params": best_params,
+            }
+            tuned_members[name] = pipeline
             print(f"\n[{name}] validation metrics: {json.dumps(metrics, indent=2)}")
+
+    # Ensemble: soft-voting VotingClassifier over the tuned models.
+    # VotingClassifier always clones + refits its members on whatever data
+    # .fit() is called with — here that's the same X_train each member was
+    # already tuned on, so this introduces no leakage, just recombination.
+    if len(tuned_members) >= 2:
+        print(f"\nBuilding soft-voting ensemble from: {list(tuned_members.keys())}...")
+        ensemble = VotingClassifier(estimators=list(tuned_members.items()), voting="soft")
+        with mlflow.start_run(run_name="ensemble"):
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                ensemble.fit(X_train, y_train)
+                val_prob = ensemble.predict_proba(X_val)[:, 1]
+            metrics = compute_metrics(y_val, val_prob)
+
+            mlflow.log_param("model_type", "ensemble")
+            mlflow.log_param("ensemble_members", list(tuned_members.keys()))
+            mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
+            mlflow.sklearn.log_model(ensemble, artifact_path="model")
+
+            val_results["ensemble"] = {"pipeline": ensemble, "metrics": metrics, "val_prob": val_prob}
+            print(f"\n[ensemble] validation metrics: {json.dumps(metrics, indent=2)}")
 
     best_name = max(val_results, key=lambda k: val_results[k]["metrics"]["roc_auc"])
     best_pipeline = val_results[best_name]["pipeline"]
@@ -238,32 +333,62 @@ def main() -> None:
     # so "high" always means "the ~10% highest-risk students by this
     # model's ranking" regardless of how the raw probabilities are shaped
     # by class-weighting.
-    val_risk_prob = 1.0 - val_results[best_name]["val_prob"]
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        test_prob_uncalibrated = best_pipeline.predict_proba(X_test)[:, 1]
+    test_metrics_uncalibrated = compute_metrics(y_test, test_prob_uncalibrated)
+    print(f"\n[{best_name}] test metrics BEFORE calibration: {json.dumps(test_metrics_uncalibrated, indent=2)}")
+
+    # Calibration fix: class_weight="balanced" (used above to handle class
+    # imbalance) measurably distorts predicted probabilities — Phase 3 found
+    # predicted probabilities running below observed persistence rates on the
+    # calibration curve. CalibratedClassifierCV fits a monotonic remapping
+    # (Platt/sigmoid scaling, chosen over isotonic since our ~2.4k-row
+    # validation set is on the smaller side for isotonic's more flexible,
+    # more overfit-prone nonparametric fit) using the VALIDATION set — never
+    # train (already used to fit the base model) or test (must stay unbiased
+    # for final reporting). Calibration is monotonic, so it changes the
+    # probabilities shown but not the model's ranking — risk-category
+    # percentile thresholds are unaffected (verified: Spearman rank
+    # correlation between raw and calibrated probabilities is exactly 1.0).
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        warnings.filterwarnings("ignore", category=FutureWarning)  # cv="prefit" deprecation (see comment above)
+        calibrated_pipeline = CalibratedClassifierCV(best_pipeline, method="sigmoid", cv="prefit")
+        calibrated_pipeline.fit(X_val, y_val)
+        val_prob = calibrated_pipeline.predict_proba(X_val)[:, 1]
+        test_prob = calibrated_pipeline.predict_proba(X_test)[:, 1]
+
+    test_metrics = compute_metrics(y_test, test_prob)
+    print(f"\n[{best_name}] FINAL held-out test metrics AFTER calibration: {json.dumps(test_metrics, indent=2)}")
+    print(
+        f"Brier score: {test_metrics_uncalibrated['brier_score']:.4f} (uncalibrated) "
+        f"-> {test_metrics['brier_score']:.4f} (calibrated)"
+    )
+
+    val_risk_prob = 1.0 - val_prob
     risk_thresholds = {
         "low_max": float(np.percentile(val_risk_prob, 60)),
         "medium_max": float(np.percentile(val_risk_prob, 90)),
     }
-    print(f"Risk thresholds (from validation set percentiles): {risk_thresholds}")
+    print(f"Risk thresholds (from calibrated validation-set percentiles): {risk_thresholds}")
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=RuntimeWarning)
-        test_prob = best_pipeline.predict_proba(X_test)[:, 1]
-    test_metrics = compute_metrics(y_test, test_prob)
-    print(f"\n[{best_name}] FINAL held-out test metrics: {json.dumps(test_metrics, indent=2)}")
-
-    with mlflow.start_run(run_name=f"{best_name}_final_test"):
+    with mlflow.start_run(run_name=f"{best_name}_calibrated_final_test"):
         mlflow.log_param("model_type", best_name)
         mlflow.log_param("selection_metric", "val_roc_auc")
+        mlflow.log_param("calibration_method", "sigmoid")
         mlflow.log_metrics({k: v for k, v in test_metrics.items() if isinstance(v, (int, float))})
-        mlflow.sklearn.log_model(best_pipeline, artifact_path="model")
+        mlflow.log_metric("brier_score_uncalibrated", test_metrics_uncalibrated["brier_score"])
+        mlflow.sklearn.log_model(calibrated_pipeline, artifact_path="model")
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODELS_DIR / "model_pipeline.joblib"
-    joblib.dump(best_pipeline, model_path)
+    joblib.dump(calibrated_pipeline, model_path)
 
     metadata = {
         "model_version": MODEL_VERSION,
         "model_type": best_name,
+        "calibration_method": "sigmoid",
         "trained_at_utc": datetime.now(timezone.utc).isoformat(),
         "feature_columns": FEATURE_COLUMNS,
         "numeric_features": NUMERIC_FEATURES,
@@ -275,14 +400,19 @@ def main() -> None:
         "validation_metrics_by_model": {
             name: r["metrics"] for name, r in val_results.items()
         },
+        "best_hyperparameters": {
+            name: r["best_params"] for name, r in val_results.items() if "best_params" in r
+        },
+        "ensemble_members": list(tuned_members.keys()) if "ensemble" in val_results else None,
         "selected_model": best_name,
         "test_metrics": test_metrics,
+        "test_metrics_uncalibrated": test_metrics_uncalibrated,
         "risk_thresholds": risk_thresholds,
     }
     metadata_path = MODELS_DIR / "model_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
 
-    print(f"\nSaved pipeline -> {model_path}")
+    print(f"\nSaved calibrated pipeline -> {model_path}")
     print(f"Saved metadata -> {metadata_path}")
 
 

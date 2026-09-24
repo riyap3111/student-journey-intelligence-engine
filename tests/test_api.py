@@ -59,7 +59,7 @@ def test_model_info_matches_metadata(client):
     r = client.get("/model_info")
     assert r.status_code == 200
     body = r.json()
-    assert body["model_type"] in ("logistic_regression", "random_forest", "xgboost")
+    assert body["model_type"] in ("logistic_regression", "random_forest", "xgboost", "ensemble")
     assert "test_metrics" in body and "roc_auc" in body["test_metrics"]
     assert set(body["excluded_demographic_proxy_columns"]) == {
         "age_band", "gender", "first_gen_flag", "distance_from_campus_band"
@@ -133,3 +133,68 @@ def test_service_degrades_gracefully_without_a_model(tmp_path, monkeypatch):
     # leave a permanently broken `app` behind for any test that runs after it.
     monkeypatch.undo()
     importlib.reload(main_module)
+
+
+@pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
+def test_predict_requires_api_key_when_configured(client, monkeypatch):
+    """When STUDENT_JOURNEY_API_KEY is set, /predict requires a matching
+    X-API-Key header; when unset (this project's default), no header is
+    required — see security.py's rationale. Only security.py needs
+    reloading: main.py's route already holds a reference to
+    require_api_key, and that function looks up EXPECTED_API_KEY from its
+    module's __dict__ at call time, which reload mutates in place."""
+    import importlib
+
+    import student_journey.api.security as security_module
+
+    monkeypatch.setenv("STUDENT_JOURNEY_API_KEY", "test-secret-key")
+    importlib.reload(security_module)
+    try:
+        r = client.post("/predict", json=VALID_RECORD)
+        assert r.status_code == 401
+
+        r = client.post("/predict", json=VALID_RECORD, headers={"X-API-Key": "wrong-key"})
+        assert r.status_code == 401
+
+        r = client.post("/predict", json=VALID_RECORD, headers={"X-API-Key": "test-secret-key"})
+        assert r.status_code == 200
+    finally:
+        monkeypatch.undo()
+        importlib.reload(security_module)
+
+
+@pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
+def test_metrics_endpoint_exposes_prometheus_format(client):
+    client.get("/health")  # generate at least one data point first
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert "# HELP" in r.text or "# TYPE" in r.text
+
+
+def test_rate_limiting_mechanism_returns_429_when_exceeded():
+    """Verifies the slowapi wiring pattern used in main.py actually enforces
+    a limit and returns 429 — tested against an isolated minimal app with a
+    trivial body and a very low limit, rather than main.py's real endpoints,
+    since hitting the real (SHAP-heavy) /predict enough times to exceed its
+    60/minute limit would make this test extremely slow."""
+    from fastapi import FastAPI, Request
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+
+    mini_app = FastAPI()
+    mini_limiter = Limiter(key_func=get_remote_address)
+    mini_app.state.limiter = mini_limiter
+    mini_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    @mini_app.get("/ping")
+    @mini_limiter.limit("3/minute")
+    def ping(request: Request):
+        return {"ok": True}
+
+    with TestClient(mini_app) as mini_client:
+        for _ in range(3):
+            r = mini_client.get("/ping")
+            assert r.status_code == 200
+        r = mini_client.get("/ping")
+        assert r.status_code == 429

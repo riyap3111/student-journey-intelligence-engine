@@ -16,6 +16,7 @@ APP_PATH = "src/student_journey/dashboard/app.py"
 TAB_NAMES = [
     "Overview", "Predict", "Risk Distribution", "Feature Importance",
     "Persistence Trends", "Bottleneck Analysis", "Model Performance", "Monitoring",
+    "Intervention Impact",
 ]
 
 
@@ -57,3 +58,33 @@ def test_model_performance_tab_shows_metrics():
     perf_tab = at.tabs[6]
     assert not at.exception
     assert len(perf_tab.metric) == 5  # precision, recall, f1, roc_auc, average_precision
+
+
+@pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
+def test_intervention_impact_tab_defaults_to_high_risk_and_shows_metrics():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    assert not at.exception
+
+    impact_tab = at.tabs[8]
+    assert impact_tab.multiselect[0].value == ["high"]
+    metrics = {m.label: m.value for m in impact_tab.metric}
+    assert "Estimated additional students retained" in metrics
+
+
+@pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
+def test_intervention_impact_responds_to_slider_changes():
+    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at.run()
+    impact_tab = at.tabs[8]
+
+    # participation_rate is the second of the three sliders on this tab
+    participation_slider = impact_tab.slider[0]
+    participation_slider.set_value(1.0).run()
+    effect_slider = at.tabs[8].slider[1]
+    effect_slider.set_value(1.0).run()
+    assert not at.exception
+
+    metrics = {m.label: m.value for m in at.tabs[8].metric}
+    # 100% participation + 100% effect should retain everyone in the targeted category
+    assert metrics["Scenario expected non-persisters"] == "0"

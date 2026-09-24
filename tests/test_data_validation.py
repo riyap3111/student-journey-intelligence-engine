@@ -78,3 +78,60 @@ def test_graduating_and_censored_rows_have_null_target(small_db):
     finally:
         conn.close()
     assert rows[0] == 0
+
+
+def test_stopout_then_return_students_have_correct_labels():
+    """Regression test for a real bug caught during development: students who
+    stop out for a term or two and return later must have
+    persisted_next_term=0 on the row right before the gap (they did not
+    persist to the immediate next calendar term) even though they go on to
+    have later rows. An early, incorrect version of the generator's loop
+    silently discarded the gap advancement each iteration, so no gaps ever
+    actually appeared in the output despite the stop-out logic "running" —
+    this test would have caught that by asserting gaps actually occur."""
+    _students, terms, enrollments = generate(n_students=1500, seed=42)
+    term_order_map = dict(zip(terms.term_id, terms.term_order))
+    df = enrollments.copy()
+    df["term_order"] = df["term_id"].map(term_order_map)
+    df = df.sort_values(["student_id", "term_number"]).reset_index(drop=True)
+    df["prev_term_order"] = df.groupby("student_id")["term_order"].shift(1)
+    df["gap"] = df["term_order"] - df["prev_term_order"]
+
+    gap_rows = df[df["gap"] > 1]
+    assert len(gap_rows) > 0, "expected at least one stop-out-and-return case at this sample size"
+
+    pre_gap_rows = df.loc[gap_rows.index - 1]
+    assert (pre_gap_rows["persisted_next_term"] == 0).all()
+
+    # These students have later rows despite the 0 label — exactly the case a
+    # naive "persisted=0 implies no later rows" check would wrongly flag.
+    for student_id in pre_gap_rows["student_id"]:
+        assert len(df[df.student_id == student_id]) > 1
+
+
+def test_label_matches_term_order_adjacency_bidirectionally(small_db):
+    """The real invariant persisted_next_term must satisfy: 1 iff a row
+    exists at term_order+1, 0 iff it does not — checked in both directions,
+    via terms.term_order rather than term_number (which a stop-out gap
+    would make an unreliable proxy for calendar adjacency)."""
+    conn = sqlite3.connect(small_db)
+    try:
+        rows = conn.execute(
+            """
+            WITH e AS (
+                SELECT en.student_id, en.term_id, en.persisted_next_term, t.term_order
+                FROM enrollments en JOIN terms t ON en.term_id = t.term_id
+            )
+            SELECT e1.student_id, e1.term_order, e1.persisted_next_term
+            FROM e e1
+            LEFT JOIN e e2 ON e1.student_id = e2.student_id AND e2.term_order = e1.term_order + 1
+            WHERE e1.persisted_next_term IS NOT NULL
+              AND (
+                    (e1.persisted_next_term = 1 AND e2.student_id IS NULL)
+                 OR (e1.persisted_next_term = 0 AND e2.student_id IS NOT NULL)
+              )
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows == []

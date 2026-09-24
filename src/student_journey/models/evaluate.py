@@ -23,7 +23,7 @@ import joblib
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.calibration import calibration_curve
-from sklearn.metrics import ConfusionMatrixDisplay, classification_report
+from sklearn.metrics import ConfusionMatrixDisplay, brier_score_loss, classification_report
 
 from student_journey.config import DOCS_SCREENSHOTS_DIR, MODELS_DIR
 from student_journey.models.train import (
@@ -68,10 +68,16 @@ def plot_confusion_matrix(y_true, y_pred, out_path):
     plt.close(fig)
 
 
-def plot_calibration_curve(y_true, y_prob, out_path):
+def plot_calibration_curve(y_true, y_prob, out_path, y_prob_uncalibrated=None):
+    """If y_prob_uncalibrated is given, plots both curves for a direct
+    before/after comparison of the CalibratedClassifierCV fix in train.py."""
+    fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    if y_prob_uncalibrated is not None:
+        prob_true_raw, prob_pred_raw = calibration_curve(y_true, y_prob_uncalibrated, n_bins=10, strategy="quantile")
+        ax.plot(prob_pred_raw, prob_true_raw, marker="o", label="Before calibration", color="#e34948")
     prob_true, prob_pred = calibration_curve(y_true, y_prob, n_bins=10, strategy="quantile")
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.plot(prob_pred, prob_true, marker="o", label="Model")
+    label = "After calibration" if y_prob_uncalibrated is not None else "Model"
+    ax.plot(prob_pred, prob_true, marker="o", label=label, color="#2a78d6")
     ax.plot([0, 1], [0, 1], linestyle="--", color="gray", label="Perfectly calibrated")
     ax.set_xlabel("Mean predicted probability")
     ax.set_ylabel("Observed persistence rate")
@@ -80,6 +86,18 @@ def plot_calibration_curve(y_true, y_prob, out_path):
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
+
+
+def get_uncalibrated_probabilities(pipeline, X_test):
+    """If the saved pipeline is a CalibratedClassifierCV (see train.py),
+    returns the base (pre-calibration) model's probabilities for
+    before/after comparison; None if the saved pipeline isn't calibrated."""
+    if not hasattr(pipeline, "calibrated_classifiers_"):
+        return None
+    base_pipeline = pipeline.calibrated_classifiers_[0].estimator
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        return base_pipeline.predict_proba(X_test)[:, 1]
 
 
 def error_analysis(test_df: pd.DataFrame, y_true, y_pred) -> dict:
@@ -137,9 +155,18 @@ def main() -> None:
     print("\nsklearn classification_report:")
     print(classification_report(y_test, y_pred, target_names=["not_persisted", "persisted"]))
 
+    y_prob_uncalibrated = get_uncalibrated_probabilities(pipeline, X_test)
+    if y_prob_uncalibrated is not None:
+        print(
+            f"\nCalibration fix: Brier score {brier_score_loss(y_test, y_prob_uncalibrated):.4f} (before) "
+            f"-> {metrics['brier_score']:.4f} (after)"
+        )
+
     DOCS_SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     plot_confusion_matrix(y_test, y_pred, DOCS_SCREENSHOTS_DIR / "confusion_matrix.png")
-    plot_calibration_curve(y_test, y_prob, DOCS_SCREENSHOTS_DIR / "calibration_curve.png")
+    plot_calibration_curve(
+        y_test, y_prob, DOCS_SCREENSHOTS_DIR / "calibration_curve.png", y_prob_uncalibrated=y_prob_uncalibrated
+    )
     print(f"\nSaved confusion matrix -> {DOCS_SCREENSHOTS_DIR / 'confusion_matrix.png'}")
     print(f"Saved calibration curve -> {DOCS_SCREENSHOTS_DIR / 'calibration_curve.png'}")
 

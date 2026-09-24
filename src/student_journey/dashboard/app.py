@@ -16,6 +16,7 @@ import plotly.express as px
 import streamlit as st
 from scipy.stats import ks_2samp
 
+from student_journey.analysis.intervention_simulation import simulate_intervention_impact
 from student_journey.api.schemas import API_DISCLAIMER
 from student_journey.config import DB_PATH, DOCS_SCREENSHOTS_DIR, FEATURES_TABLE
 from student_journey.data.generate_synthetic_data import PROGRAMS
@@ -204,12 +205,13 @@ def render_predict(model, explainer):
     factors_df["color"] = factors_df["direction"].map(
         {"increases_persistence_likelihood": STATUS["good"], "increases_risk": STATUS["critical"]}
     )
+    scale_label = "log-odds scale" if explanation["score_scale"] == "log_odds" else "probability scale"
     fig = px.bar(
         factors_df.sort_values("contribution"),
         x="contribution", y="feature", orientation="h",
         color="direction",
         color_discrete_map={"increases_persistence_likelihood": STATUS["good"], "increases_risk": STATUS["critical"]},
-        labels={"contribution": "Contribution (log-odds scale)", "feature": "", "direction": ""},
+        labels={"contribution": f"Contribution ({scale_label})", "feature": "", "direction": ""},
         title="Top contributing factors for this prediction",
     )
     fig.update_layout(showlegend=True)
@@ -260,12 +262,13 @@ def render_feature_importance(explainer):
         st.warning("No trained model found. Run `python -m student_journey.models.train`.")
         return
 
+    scale_label = "log-odds scale" if explainer.score_scale == "log_odds" else "probability scale"
     st.caption("Mean |SHAP value| over a sample of the held-out test set — one hue, since this ranks a single series by magnitude.")
     importance = explainer.global_importance(sample_size=300).sort_values()
     fig = px.bar(
         importance, orientation="h",
         color_discrete_sequence=[SEQUENTIAL_BLUE],
-        labels={"value": "Mean |SHAP value| (log-odds scale)", "index": ""},
+        labels={"value": f"Mean |SHAP value| ({scale_label})", "index": ""},
         title="Global feature importance",
     )
     fig.update_layout(showlegend=False, margin={"l": 220}, yaxis={"automargin": True})
@@ -373,6 +376,52 @@ def render_monitoring(features_df):
         st.plotly_chart(fig, use_container_width=True)
 
 
+def render_intervention_impact(model):
+    st.caption(
+        "**Sensitivity analysis over stated assumptions, not a prediction.** The risk-category counts and "
+        "observed attrition rates below are real, computed from actual model predictions. The participation "
+        "rate and effectiveness are assumptions **you set** with the sliders — this dataset has no recorded "
+        "outreach history to estimate a real effect size from. Use this to sketch a business case for "
+        "discussion, not as a forecast of what any real program would achieve."
+    )
+    if model is None:
+        st.warning("No trained model found. Run `python -m student_journey.models.train`.")
+        return
+
+    scored = score_cohort(model.model_version)
+    counts = scored["risk_category"].value_counts().to_dict()
+    rates = {
+        cat: float(1 - scored.loc[scored.risk_category == cat, TARGET].astype(int).mean())
+        for cat in counts
+    }
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        target_categories = st.multiselect(
+            "Target risk categories", ["low", "medium", "high"], default=["high"]
+        )
+    with c2:
+        participation_rate = st.slider("Participation rate (assumed)", 0.0, 1.0, 0.6, 0.05)
+    with c3:
+        relative_risk_reduction = st.slider("Relative risk reduction (assumed)", 0.0, 1.0, 0.2, 0.05)
+
+    if not target_categories:
+        st.info("Select at least one risk category to simulate.")
+        return
+
+    result = simulate_intervention_impact(
+        counts, rates, target_categories, participation_rate, relative_risk_reduction
+    )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Baseline expected non-persisters", f"{result['baseline_expected_non_persisters']:.0f}")
+    c2.metric("Scenario expected non-persisters", f"{result['scenario_expected_non_persisters']:.0f}")
+    c3.metric("Estimated additional students retained", f"{result['additional_students_retained']:.0f}")
+
+    breakdown = pd.DataFrame(result["by_category"]).T
+    st.dataframe(breakdown, use_container_width=True)
+
+
 def main():
     st.title("Student Journey Intelligence Engine")
     st.info(PRIVACY_NOTICE)
@@ -387,6 +436,7 @@ def main():
     tabs = st.tabs([
         "Overview", "Predict", "Risk Distribution", "Feature Importance",
         "Persistence Trends", "Bottleneck Analysis", "Model Performance", "Monitoring",
+        "Intervention Impact",
     ])
     with tabs[0]:
         render_overview(features_df, model)
@@ -404,6 +454,8 @@ def main():
         render_model_performance(model)
     with tabs[7]:
         render_monitoring(features_df)
+    with tabs[8]:
+        render_intervention_impact(model)
 
 
 if __name__ == "__main__":

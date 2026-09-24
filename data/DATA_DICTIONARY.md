@@ -48,24 +48,43 @@ into three raw tables (grain noted per table), loaded into SQLite by
 | `advising_contact_flag` | 0/1 | Whether the student had a recorded advising contact this term (synthetic engagement proxy). |
 | `financial_aid_flag` | 0/1 | Whether the student received financial aid this term. |
 | `is_graduating_term` | 0/1 | True if this is the student's final, successful (graduating) term. Rows with this flag are **excluded from the negative class** — see below. |
-| `persisted_next_term` | 0/1/NULL | **Prediction target.** 1 if the student has an enrollment row in the next sequential term for them, 0 if not and this was not a graduating term, `NULL` (excluded from training) if `is_graduating_term = 1`. |
+| `censored_flag` | 0/1 | True if the student's simulated enrollment would have continued (immediately or after a stop-out gap) but ran past the end of the generated calendar, so the outcome can't be observed. Also excluded from training — see below. |
+| `persisted_next_term` | 0/1/NULL | **Prediction target.** 1 if the student has an enrollment row at the immediate next *calendar* term (`term_order + 1`) — not just "eventually returned." `NULL` (excluded from training) if `is_graduating_term = 1` or `censored_flag = 1`. |
+
+## Stop-out and return (gap terms)
+
+A minority of continuing students don't re-enroll immediately — they stop out for 2-3
+calendar terms before returning, more likely following a weaker term academically. This
+means a student's `term_number` sequence (1, 2, 3, ...) can correspond to a
+*non-consecutive* run of `term_order` values. For that student, the row right before
+the gap correctly has `persisted_next_term = 0` (they did not persist to the immediate
+next term) even though they have later rows after returning — this is the standard
+definition of term-over-term persistence used in real institutional research, and
+`prior_term_enrolled_flag` (an engineered feature, below) is what signals "returning
+after a gap" downstream.
 
 ## Target construction and leakage guardrails
 
-- `persisted_next_term` is computed strictly from *future* enrollment existence — it
-  is never used as an input feature, and no field derived from term *N+1* is used to
-  predict term *N*.
-- Rows where `is_graduating_term = 1` are excluded from model training/evaluation
-  entirely (they are neither "persisted" nor "attrition" in a meaningful sense).
+- `persisted_next_term` is computed **after** the full enrollment sequence is
+  generated, strictly from whether a row exists at `term_order + 1` for that student —
+  never baked in during simulation and never a function of any field describing term
+  *N+1* itself. See `_compute_persistence_labels` in the generator.
+- Rows where `is_graduating_term = 1` or `censored_flag = 1` are excluded from model
+  training/evaluation entirely.
 - All engineered features (Phase 2) are computed using **only** data available through
-  term `N` (cumulative GPA, trend, etc. as of that term) — this is validated
-  explicitly by a leakage check in `src/student_journey/data/validate.py`.
+  term `N` (cumulative GPA, trend, etc. as of that term) — validated explicitly by a
+  leakage check in `src/student_journey/data/validate.py`, including a bidirectional
+  check that `persisted_next_term` matches actual `term_order` adjacency in both
+  directions (not just "1 implies a next row exists," but "0 implies no next row
+  exists either" — the direction a stop-out gap could otherwise silently violate).
 
 ## Engineered features (added in Phase 2, computed from the above — not raw columns)
 
 `gpa_change`, `cumulative_gpa`, `credit_completion_rate`, `cumulative_credits_completed`,
-`enrollment_intensity_numeric`, `prior_term_enrolled_flag`, `academic_momentum`
-(trend over the student's last few terms), `cumulative_withdrawals`,
-`cumulative_repeats`. Exact definitions live in
+`enrollment_intensity_numeric`, `academic_momentum` (trend over the student's last few
+enrolled terms, regardless of calendar gaps between them), `cumulative_withdrawals`,
+`cumulative_repeats`, and `prior_term_enrolled_flag` (0/1: was there a row at
+`term_order - 1`? — 0 for a student's first term *or* a term right after returning
+from a stop-out gap, 1 for consecutive enrollment). Exact definitions live in
 [`src/student_journey/features/build_features.py`](../src/student_journey/features/build_features.py)
-docstrings once implemented, to avoid this document drifting out of sync with code.
+and [`db/queries/transform.sql`](../db/queries/transform.sql).
