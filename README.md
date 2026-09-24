@@ -19,7 +19,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 2. Data pipeline | ✅ done |
 | 3. ML training | ✅ done |
 | 4. Explainability & responsible AI | ✅ done |
-| 5. API | ⬜ not started |
+| 5. API | ✅ done |
 | 6. Dashboard | ⬜ not started |
 | 7. Testing & docs | ⬜ not started |
 
@@ -150,6 +150,48 @@ Per-prediction explanations use `shap.LinearExplainer` (exact for this linear mo
 Full **[model card](docs/model_card.md)** — intended/non-intended use, dataset, model, metrics, limitations, and ethical risks — is the source of truth for what this system is (and isn't) responsible for.
 
 **Every prediction and explanation is accompanied by this statement, repeated verbatim in the API (Phase 5) and dashboard (Phase 6):** *This model identifies statistical patterns in historical-style data. It does not determine, guarantee, or fully explain any individual student's actual future.*
+
+### Phase 5: prediction API (FastAPI)
+
+```bash
+export PYTHONPATH=src
+
+uvicorn student_journey.api.main:app --reload --port 8000
+# then in another terminal: http://localhost:8000/docs for interactive Swagger UI
+
+pytest tests/test_api.py -v
+```
+
+**Endpoints:**
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/health` | GET | Liveness/readiness — returns `200` even if no model is loaded, with `model_loaded: false`, so orchestration can distinguish "process is up" from "ready to serve" |
+| `/predict` | POST | One student-term's engineered features → prediction + SHAP explanation |
+| `/batch_predict` | POST | Up to 500 records in one call, each with an optional `record_id` echoed back for matching |
+| `/model_info` | GET | Model version, features used, excluded demographic proxies, held-out test metrics |
+
+Every `/predict` and `/batch_predict` response includes `persistence_probability`, `risk_probability`, `risk_category`, `top_contributing_factors` (SHAP-based), `model_version`, and a `disclaimer` stating the prediction is for planning/advising support, not automated decision-making.
+
+**Design note:** `/predict` takes an already-*engineered* student-term record (GPA, cumulative credits, momentum, etc. — the same schema `build_features.py` produces), not raw multi-term history. Computing cumulative/trend features requires a student's full history, which belongs in the feature pipeline (Phase 2), not duplicated in the API layer — a realistic deployment has an upstream job call `build_features.py` and feed its output to this scoring service.
+
+**Verified failure paths, not just the happy path:** invalid input (e.g. an unknown `program` value or `term_gpa` out of `[0,4]`) returns `422` with a field-level error; if no trained model is present, the service still starts (`/health` reports `model_loaded: false`) but `/predict`, `/batch_predict`, and `/model_info` return `503` with an actionable message — tested in `tests/test_api.py::test_service_degrades_gracefully_without_a_model` by actually removing the model file and confirming the behavior, not just asserting it.
+
+Example real end-to-end request against a running server:
+```bash
+curl -s -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "term_number": 3, "enrollment_intensity": "full_time",
+    "credits_attempted": 15, "credits_completed": 12, "credit_completion_rate": 0.8,
+    "cumulative_credits_attempted": 42, "cumulative_credits_completed": 34,
+    "cumulative_credit_completion_rate": 0.81,
+    "term_gpa": 2.1, "cumulative_gpa": 2.4, "gpa_change": -0.3, "academic_momentum": -0.25,
+    "courses_withdrawn": 1, "cumulative_withdrawals": 2, "courses_repeated": 0, "cumulative_repeats": 1,
+    "advising_contact_flag": 0, "financial_aid_flag": 1, "prior_term_enrolled_flag": 1,
+    "program": "Business", "entry_type": "first_time"
+  }'
+```
 
 ## Responsible use
 
