@@ -1,5 +1,6 @@
 pandas>=2.2
 numpy>=1.26
+scipy>=1.11
 pyarrow>=15.0
 scikit-learn>=1.4
 xgboost>=2.0  # requires libomp on macOS (brew install libomp); works out of the box on Linux/Docker

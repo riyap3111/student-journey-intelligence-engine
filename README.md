@@ -18,7 +18,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 1. Planning | ✅ done |
 | 2. Data pipeline | ✅ done |
 | 3. ML training | ✅ done |
-| 4. Explainability & responsible AI | ⬜ not started |
+| 4. Explainability & responsible AI | ✅ done |
 | 5. API | ⬜ not started |
 | 6. Dashboard | ⬜ not started |
 | 7. Testing & docs | ⬜ not started |
@@ -136,6 +136,21 @@ Confusion matrix and calibration curve: [`docs/screenshots/confusion_matrix.png`
 
 All metrics above are copy-pasted from an actual run of the commands above, not hand-typed estimates.
 
+### Phase 4: explainability and responsible AI
+
+```bash
+export PYTHONPATH=src
+
+python -m student_journey.explainability.shap_utils   # smoke-test per-prediction SHAP explanations + global importance
+pytest tests/test_explainability.py -v                 # verifies SHAP values exactly reconstruct the model's own probability
+```
+
+Per-prediction explanations use `shap.LinearExplainer` (exact for this linear model, not approximate) on the log-odds scale, aggregated from one-hot dummy columns back to human-meaningful feature names (e.g. all `program_*` dummies collapse into one `program` contribution). The additivity property — `base_value + sum(shap_values)` reproduces the model's own predicted probability exactly — is checked by an automated test, not just asserted. Global feature importance: [`docs/screenshots/shap_global_importance.png`](docs/screenshots/shap_global_importance.png) (term GPA, cumulative credits attempted/completed dominate — consistent with how the synthetic data was generated, a useful sanity check).
+
+Full **[model card](docs/model_card.md)** — intended/non-intended use, dataset, model, metrics, limitations, and ethical risks — is the source of truth for what this system is (and isn't) responsible for.
+
+**Every prediction and explanation is accompanied by this statement, repeated verbatim in the API (Phase 5) and dashboard (Phase 6):** *This model identifies statistical patterns in historical-style data. It does not determine, guarantee, or fully explain any individual student's actual future.*
+
 ## Responsible use
 
 - This system identifies **statistical patterns** in historical-style data. It does
@@ -144,8 +159,8 @@ All metrics above are copy-pasted from an actual run of the commands above, not 
   Non-intended use: automated decisions about admissions, financial aid, discipline,
   or academic standing.
 - No real student PII is collected, stored, or processed by this project.
-- See [`docs/model_card.md`](docs/model_card.md) *(added in Phase 4)* for full
-  intended use, limitations, and fairness considerations.
+- See [`docs/model_card.md`](docs/model_card.md) for full intended use,
+  non-intended use, dataset, model, metrics, limitations, and ethical risks.
 
 ## License
 
