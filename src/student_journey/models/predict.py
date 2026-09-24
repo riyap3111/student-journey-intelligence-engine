@@ -29,7 +29,6 @@ import warnings
 from dataclasses import dataclass
 
 import joblib
-import numpy as np
 import pandas as pd
 
 from student_journey.config import MODELS_DIR
@@ -99,6 +98,7 @@ class PersistenceModel:
 if __name__ == "__main__":
     # Smoke test: predict on a few rows straight from the features table.
     import sqlite3
+
     from student_journey.config import DB_PATH, FEATURES_TABLE
 
     conn = sqlite3.connect(DB_PATH)

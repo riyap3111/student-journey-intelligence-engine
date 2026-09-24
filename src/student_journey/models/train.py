@@ -173,7 +173,7 @@ def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0
         "average_precision": float(average_precision_score(y_true, y_prob)),
         "brier_score": float(brier_score_loss(y_true, y_prob)),
         "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
-        "n_samples": int(len(y_true)),
+        "n_samples": len(y_true),
         "positive_rate": float(y_true.mean()),
     }
 

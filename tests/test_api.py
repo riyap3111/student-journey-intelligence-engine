@@ -107,6 +107,7 @@ def test_service_degrades_gracefully_without_a_model(tmp_path, monkeypatch):
     """Simulate no trained model at all: /health stays 200 (liveness), but
     endpoints that need the model return 503 with an actionable message."""
     import importlib
+
     import student_journey.api.model_loader as model_loader_module
 
     def raise_not_found(*args, **kwargs):

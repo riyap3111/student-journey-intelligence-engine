@@ -17,12 +17,11 @@ import streamlit as st
 from scipy.stats import ks_2samp
 
 from student_journey.api.schemas import API_DISCLAIMER
-from student_journey.config import DB_PATH, DOCS_SCREENSHOTS_DIR, FEATURES_TABLE, MODELS_DIR
+from student_journey.config import DB_PATH, DOCS_SCREENSHOTS_DIR, FEATURES_TABLE
 from student_journey.data.generate_synthetic_data import PROGRAMS
 from student_journey.explainability.shap_utils import PersistenceExplainer
 from student_journey.models.predict import PersistenceModel
 from student_journey.models.train import (
-    FEATURE_COLUMNS,
     TARGET,
     TRAIN_MAX_TERM_ORDER,
     VAL_MAX_TERM_ORDER,

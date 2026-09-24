@@ -42,7 +42,12 @@ import pandas as pd
 import shap
 
 from student_journey.config import MODELS_DIR
-from student_journey.models.train import CATEGORICAL_FEATURES, FEATURE_COLUMNS, load_modeling_data, time_aware_split
+from student_journey.models.train import (
+    CATEGORICAL_FEATURES,
+    FEATURE_COLUMNS,
+    load_modeling_data,
+    time_aware_split,
+)
 
 MODEL_PATH = MODELS_DIR / "model_pipeline.joblib"
 BACKGROUND_SAMPLE_SIZE = 100

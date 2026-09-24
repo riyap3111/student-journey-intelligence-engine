@@ -25,9 +25,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from student_journey.api.model_loader import ModelBundle
 from student_journey.api.schemas import (
     API_DISCLAIMER,
+    BatchPredictionItem,
     BatchPredictRequest,
     BatchPredictResponse,
-    BatchPredictionItem,
     ContributingFactor,
     HealthResponse,
     ModelInfoResponse,

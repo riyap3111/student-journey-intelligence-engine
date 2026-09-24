@@ -98,10 +98,8 @@ def _simulate_enrollments(
         cumulative_credits_attempted = 0
         cumulative_credits_completed = 0
         prev_gpa = None
-        term_number = 0
 
-        for _ in range(max_term_number):
-            term_number += 1
+        for term_number in range(1, max_term_number + 1):
             term_order = row.entry_term_order + term_number - 1
             if term_order > max_term_order:
                 break  # ran off the end of the observation calendar (right-censored)
@@ -115,7 +113,7 @@ def _simulate_enrollments(
             term_gpa = float(np.clip(rng.normal(2.7 + 0.5 * ability + gpa_drift, 0.55), 0.0, 4.0))
 
             completion_ratio = float(np.clip(0.55 + 0.15 * term_gpa + rng.normal(0, 0.08), 0.15, 1.0))
-            credits_completed = int(round(credits_attempted * completion_ratio))
+            credits_completed = round(credits_attempted * completion_ratio)
             credits_completed = min(credits_completed, credits_attempted)
 
             withdrawal_rate = max(0.0, 0.35 - 0.09 * term_gpa)

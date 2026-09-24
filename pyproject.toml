@@ -48,3 +48,11 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+ignore = [
+    "B008",   # FastAPI's Depends(...) in a default argument is the standard idiom, not a bug
+    "UP045",  # Optional[X] kept (not X | None) for consistency with this project's Python 3.9 floor
+    "BLE001", # a few modules deliberately catch a blind Exception to degrade gracefully
+              # (missing model file, xgboost native-library load failure) — documented at each site
+]

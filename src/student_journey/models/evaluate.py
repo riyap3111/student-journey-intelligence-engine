@@ -17,6 +17,7 @@ import json
 import warnings
 
 import matplotlib
+
 matplotlib.use("Agg")  # headless-safe backend, no display required
 import joblib
 import matplotlib.pyplot as plt
@@ -109,7 +110,7 @@ def subgroup_performance(test_df: pd.DataFrame, y_true, y_prob, y_pred) -> dict:
             g_true, g_prob = y_true[positions], y_prob[positions]
             if len(set(g_true)) < 2:
                 # ROC-AUC is undefined with only one class present in the slice
-                by_group[str(value)] = {"n": int(len(positions)), "note": "insufficient class diversity for ROC-AUC"}
+                by_group[str(value)] = {"n": len(positions), "note": "insufficient class diversity for ROC-AUC"}
                 continue
             by_group[str(value)] = compute_metrics(g_true, g_prob)
         results[col] = by_group

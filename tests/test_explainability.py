@@ -7,7 +7,6 @@ Requires a trained model at models/model_pipeline.joblib — run
 `python -m student_journey.models.train` first if these are skipped/failing
 for that reason.
 """
-import numpy as np
 import pandas as pd
 import pytest
 from scipy.special import expit
