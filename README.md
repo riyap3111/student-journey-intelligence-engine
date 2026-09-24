@@ -16,7 +16,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | Phase | Status |
 |---|---|
 | 1. Planning | ✅ done |
-| 2. Data pipeline | 🚧 in progress |
+| 2. Data pipeline | ✅ done |
 | 3. ML training | ⬜ not started |
 | 4. Explainability & responsible AI | ⬜ not started |
 | 5. API | ⬜ not started |
@@ -71,6 +71,8 @@ student-journey-intelligence-engine/
 
 ## Setup
 
+Requires Python 3.9+.
+
 ```bash
 git clone <repo-url>
 cd student-journey-intelligence-engine
@@ -81,14 +83,20 @@ pip install -r requirements.txt
 
 Phase-by-phase run instructions are added below as each phase is completed.
 
-### Phase 2: generate data and build features (once implemented)
+### Phase 2: generate data, load into SQLite, validate, build features
 
 ```bash
-python -m student_journey.data.generate_synthetic_data
-python -m student_journey.data.ingest
-python -m student_journey.data.validate
-python -m student_journey.features.build_features
+export PYTHONPATH=src   # or `pip install -e .`
+
+python -m student_journey.data.generate_synthetic_data   # writes data/raw/*.csv
+python -m student_journey.data.ingest                    # loads CSVs into db/student_journey.db
+python -m student_journey.data.validate                  # runs 12 SQL data-quality/leakage checks; exits non-zero on failure
+python -m student_journey.features.build_features         # writes the `features` table + data/processed/features.parquet
+
+pytest tests/test_data_validation.py tests/test_features.py -v
 ```
+
+All 12 validation checks and 11 tests pass as of this commit (verified by running the above).
 
 ## Responsible use
 
