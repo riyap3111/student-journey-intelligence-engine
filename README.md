@@ -20,7 +20,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 3. ML training | ✅ done |
 | 4. Explainability & responsible AI | ✅ done |
 | 5. API | ✅ done |
-| 6. Dashboard | ⬜ not started |
+| 6. Dashboard | ✅ done |
 | 7. Testing & docs | ⬜ not started |
 
 **Implemented vs. planned:** anything not checked off above is *planned*, not built.
@@ -192,6 +192,31 @@ curl -s -X POST http://localhost:8000/predict \
     "program": "Business", "entry_type": "first_time"
   }'
 ```
+
+### Phase 6: dashboard (Streamlit)
+
+```bash
+export PYTHONPATH=src
+streamlit run src/student_journey/dashboard/app.py
+# opens at http://localhost:8501
+
+pytest tests/test_dashboard.py -v
+```
+
+Eight tabs, each backed by real computed data (nothing hardcoded):
+
+1. **Overview** — dataset size/balance and model version/test metrics as stat tiles.
+2. **Predict** — a form matching the API's `/predict` schema; submits to the same `PersistenceModel`/`PersistenceExplainer` code the API uses (no HTTP dependency on the API being up), showing probability, risk category, and a SHAP factors chart.
+3. **Risk Distribution** — students by risk category and a risk-probability histogram over the held-out cohort, plus the actual attrition rate observed within each category (the same low/medium/high gradient documented in Phase 3).
+4. **Feature Importance** — live global SHAP importance (same method as `docs/screenshots/shap_global_importance.png`).
+5. **Persistence Trends** — term-over-term persistence rate, sparse terms (<20 students) dropped rather than shown as a misleadingly noisy rate.
+6. **Bottleneck Analysis** — withdrawal/repeat rates by term number and program. **Honestly scoped:** the dataset models student-terms, not individual courses, so there's no course-level table to analyze — this is stated on the tab itself, not glossed over.
+7. **Model Performance** — live metrics plus the saved confusion matrix and calibration plots.
+8. **Monitoring** — a real KS-statistic comparison of train-period vs. test-period feature distributions, explicitly labeled as illustrating the drift-check *method* (there's no live production traffic in a portfolio project to actually monitor).
+
+**Chart design:** built with Plotly using the dataviz skill's validated reference palette (unmodified, so no re-validation needed) — status colors (green/amber/red) mapped semantically to risk categories, a single sequential hue for magnitude-only rankings, fixed (never auto-cycled) categorical hues for multi-series comparisons, and no dual-axis charts.
+
+**How this was verified without a browser:** this environment's browser tools can't reach a `localhost` server Claude starts itself, so the dashboard is tested with Streamlit's own headless harness (`streamlit.testing.v1.AppTest`), which actually executes the script end-to-end — including clicking the Predict form's submit button — and asserts on the real rendered output, not just that the file imports cleanly. Run `streamlit run` yourself locally to see it rendered.
 
 ## Responsible use
 
