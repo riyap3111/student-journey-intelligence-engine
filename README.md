@@ -23,6 +23,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 6. Dashboard | ✅ done |
 | 7. Testing & docs | ✅ done |
 | 8. Advanced upgrades (gap-terms, calibration, tuning, ensembling, API hardening, intervention analysis) | ✅ done |
+| 9. Cloud deployment (Cloud Run, Cloud SQL, Cloud Storage) | ✅ code done — ⚠️ not executed against a real GCP project (see Phase 9) |
 
 **Implemented vs. planned:** anything not checked off above is *planned*, not built.
 Any metric, screenshot, or claim in this README that isn't backed by code in this repo
@@ -68,18 +69,24 @@ student-journey-intelligence-engine/
 │   ├── schema.sql
 │   └── queries/                  # validation.sql, transform.sql
 ├── src/student_journey/
-│   ├── config.py
+│   ├── config.py, db.py          # paths; SQLite-or-Postgres connection abstraction
 │   ├── data/                     # generate_synthetic_data.py, ingest.py, validate.py
 │   ├── features/                 # build_features.py
 │   ├── models/                   # train.py, evaluate.py, predict.py
 │   ├── explainability/           # shap_utils.py
-│   ├── api/                      # main.py, schemas.py, model_loader.py
+│   ├── analysis/                 # intervention_simulation.py
+│   ├── cloud/                    # storage.py (Google Cloud Storage, optional)
+│   ├── api/                      # main.py, schemas.py, model_loader.py, security.py, middleware.py
 │   └── dashboard/                # app.py
 ├── models/                       # serialized model + metadata (gitignored, regenerate via train.py)
 ├── mlruns/                       # MLflow tracking store (gitignored)
-├── tests/                        # 29 tests: data, features, models, explainability, API, dashboard
+├── tests/                        # 62 tests: data, features, models, explainability, API, dashboard, db, cloud
 ├── docs/                         # architecture, model card, API examples, project summary, screenshots
-└── scripts/run_pipeline.sh       # generate -> ingest -> validate -> build_features -> train -> evaluate
+│   └── deployment/gcp.md         # Cloud Run + Cloud SQL + Cloud Storage deployment guide
+└── scripts/
+    ├── run_pipeline.sh           # generate -> ingest -> validate -> build_features -> train -> evaluate
+    ├── docker-entrypoint.sh      # picks API vs. dashboard + respects $PORT (local Docker and Cloud Run)
+    └── deploy_gcp.sh             # Cloud Run deployment (see docs/deployment/gcp.md)
 ```
 
 ## Setup
@@ -293,7 +300,65 @@ pytest tests/test_intervention_simulation.py -v               # 10 tests, pure a
 **Full verification for all of Phase 8:**
 ```bash
 bash scripts/run_pipeline.sh   # regenerates data (with gap-terms), trains (tuning + ensembling + calibration), evaluates
-pytest tests/ -v                # 52 tests
+pytest tests/ -v                # 62 tests
+```
+
+### Phase 9: cloud deployment (Google Cloud Run + Cloud SQL + Cloud Storage)
+
+Everything above runs entirely locally (SQLite, local model files). This phase adds a
+real path to a managed cloud deployment, without changing any of the modeling or
+serving logic — only *where the database and model artifacts live*.
+
+- **`db.py`**: SQLite by default (unchanged); set `DATABASE_URL` to switch to
+  PostgreSQL/Cloud SQL instead — every script that touches the database
+  (`ingest.py`, `validate.py`, `build_features.py`, `train.py`, `predict.py`,
+  `shap_utils.py`, the dashboard) goes through this one abstraction now, via
+  SQLAlchemy, rather than calling `sqlite3.connect()` directly. **A real bug found
+  via testing, not assumed away:** the multi-statement SQL script runner
+  (`execute_script`) originally split on every `;` naively — this project's SQL
+  files are heavily commented in plain English, and a comment reading
+  *"...returning from a gap;"* broke it, truncating a `CREATE VIEW` mid-statement.
+  Fixed by stripping `--` line comments before splitting; regression test in
+  `tests/test_db.py`.
+- **`cloud/storage.py`**: optional Google Cloud Storage integration for model
+  artifacts, gracefully disabled when `GCS_BUCKET_NAME` is unset (the same pattern
+  as XGBoost availability and API auth elsewhere in this project). This specifically
+  matters for Cloud Run, whose container filesystem is ephemeral — a model trained
+  in one instance needs somewhere durable to land before the next cold start.
+  `train.py` uploads after saving; `predict.py` downloads before loading if the
+  model isn't already on local disk.
+- **`scripts/docker-entrypoint.sh`**: the same container image serves either role
+  (API or dashboard) via a `SERVICE_TYPE` env var, and always listens on whatever
+  `$PORT` is injected — required by Cloud Run, which refuses traffic to a container
+  that ignores it. Verified locally (all three branches produce the correct command,
+  including the Cloud Run-style injected-port case) without a Docker daemon in this
+  environment to run the container itself. **A second real bug, caught by re-reading
+  my own Phase 7 instructions rather than by running anything:** switching the
+  Dockerfile from `CMD` to `ENTRYPOINT` (needed so the same image can pick a role)
+  silently broke `docker compose run --rm api bash scripts/run_pipeline.sh` — with
+  `ENTRYPOINT` set, Docker appends a `run` command's arguments to the entrypoint
+  instead of replacing it, so the script would have ignored the pipeline command
+  entirely and just started the API server. Fixed with the standard entrypoint-script
+  convention (`if [ "$#" -gt 0 ]; then exec "$@"; fi`), verified with a dry run that
+  correctly simulates `exec`'s replace-the-process semantics (a naive dry run using
+  `echo` in place of `exec` hid the bug, since `echo` doesn't terminate the script
+  the way `exec` does — worth knowing if you ever dry-run a shell entrypoint
+  yourself).
+- **`scripts/deploy_gcp.sh`** and **[`docs/deployment/gcp.md`](docs/deployment/gcp.md)**:
+  a complete deploy script and setup guide — enabling APIs, creating the Cloud SQL
+  instance and GCS bucket, IAM bindings, building via Cloud Build, deploying two
+  Cloud Run services, and a cost note on tearing it back down. **Written and
+  reviewed against real `gcloud` syntax, but not executed** — there was no GCP
+  project or credentials available in the environment this project was developed
+  in. Said outright in the doc itself, not left for you to discover.
+
+```bash
+pytest tests/test_db.py tests/test_cloud_storage.py -v   # 10 tests, no real GCP project needed (mocked/local-only)
+
+# Optional: exercise the PostgreSQL code path locally (not just SQLite) via
+# a local Postgres container standing in for Cloud SQL:
+docker compose --profile postgres up -d postgres
+# then uncomment the DATABASE_URL lines in docker-compose.yml for api/dashboard
 ```
 
 ## Responsible use

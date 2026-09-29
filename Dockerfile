@@ -15,11 +15,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+RUN chmod +x scripts/docker-entrypoint.sh
 
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8000 8501
 
-# Default: serve the API. docker-compose overrides this for the dashboard service.
-CMD ["uvicorn", "student_journey.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Which service to run (api|dashboard) and which port to listen on are both
+# set via env vars (SERVICE_TYPE, PORT) at container-start time — see
+# scripts/docker-entrypoint.sh. This is what makes the same image work for
+# docker-compose (PORT unset, defaults to 8000) and Cloud Run (PORT injected
+# by the platform, must be respected — Cloud Run refuses traffic otherwise).
+ENTRYPOINT ["scripts/docker-entrypoint.sh"]

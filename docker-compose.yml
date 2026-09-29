@@ -2,25 +2,63 @@
 # data/db/models/mlruns directories via bind mounts so artifacts produced by
 # one-off pipeline runs are visible to both. Uses Compose V2 (`docker compose`,
 # no hyphen) — no top-level `version:` key needed.
+#
+# Each service picks its role via SERVICE_TYPE (see scripts/docker-entrypoint.sh),
+# the same mechanism Cloud Run deployment uses (see docs/deployment/gcp.md) —
+# local Compose and Cloud Run run the identical image and entrypoint logic.
+#
+# By default this uses local SQLite (bind-mounted ./db) and local model
+# artifacts (bind-mounted ./models), matching every earlier phase. To test
+# against Postgres/GCS locally instead of mocking them, set DATABASE_URL /
+# GCS_BUCKET_NAME here (e.g. pointing DATABASE_URL at the `postgres` service
+# below) before running `docker compose up`.
 services:
   api:
     build: .
     ports:
       - "8000:8000"
+    environment:
+      - SERVICE_TYPE=api
+      - PORT=8000
+      # - DATABASE_URL=postgresql+psycopg2://student_journey:student_journey@postgres:5432/student_journey
+      # - GCS_BUCKET_NAME=
     volumes:
       - ./data:/app/data
       - ./db:/app/db
       - ./models:/app/models
       - ./mlruns:/app/mlruns
-    command: uvicorn student_journey.api.main:app --host 0.0.0.0 --port 8000
 
   dashboard:
     build: .
     ports:
       - "8501:8501"
+    environment:
+      - SERVICE_TYPE=dashboard
+      - PORT=8501
+      # - DATABASE_URL=postgresql+psycopg2://student_journey:student_journey@postgres:5432/student_journey
+      # - GCS_BUCKET_NAME=
     volumes:
       - ./data:/app/data
       - ./db:/app/db
       - ./models:/app/models
       - ./mlruns:/app/mlruns
-    command: streamlit run src/student_journey/dashboard/app.py --server.address 0.0.0.0 --server.port 8501
+
+  # Optional: a local PostgreSQL instance standing in for Cloud SQL, so the
+  # PostgreSQL code path (db.py) can be exercised without a real GCP project.
+  # Not started by default — run `docker compose --profile postgres up` to
+  # include it, and uncomment the DATABASE_URL lines above to point api/
+  # dashboard at it.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      - POSTGRES_USER=student_journey
+      - POSTGRES_PASSWORD=student_journey
+      - POSTGRES_DB=student_journey
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
