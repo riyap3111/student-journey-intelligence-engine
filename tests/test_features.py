@@ -2,12 +2,12 @@
 most importantly, that no feature for term N uses information from term N+1
 or later (the leakage guardrail described in build_features.py).
 """
-import sqlite3
-
 import pytest
+from sqlalchemy import create_engine
 
 from student_journey.config import SCHEMA_PATH
 from student_journey.data.generate_synthetic_data import generate
+from student_journey.db import execute_script
 from student_journey.features.build_features import build_features
 
 
@@ -16,15 +16,13 @@ def features_df(tmp_path):
     db_path = tmp_path / "test.db"
     students, terms, enrollments = generate(n_students=200, seed=99)
 
-    conn = sqlite3.connect(db_path)
-    conn.executescript(SCHEMA_PATH.read_text())
-    terms.to_sql("terms", conn, if_exists="append", index=False)
-    students.to_sql("students", conn, if_exists="append", index=False)
-    enrollments.to_sql("enrollments", conn, if_exists="append", index=False)
-    conn.commit()
-    conn.close()
+    engine = create_engine(f"sqlite:///{db_path}")
+    execute_script(engine, SCHEMA_PATH.read_text())
+    terms.to_sql("terms", engine, if_exists="append", index=False)
+    students.to_sql("students", engine, if_exists="append", index=False)
+    enrollments.to_sql("enrollments", engine, if_exists="append", index=False)
 
-    return build_features(db_path=db_path)
+    return build_features(engine=engine)
 
 
 def test_cumulative_credits_match_running_sum(features_df):

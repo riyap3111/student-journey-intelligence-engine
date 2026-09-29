@@ -19,7 +19,8 @@ import pandas as pd
 import pytest
 from scipy.special import expit
 
-from student_journey.config import DB_PATH, FEATURES_TABLE
+from student_journey.config import FEATURES_TABLE
+from student_journey.db import get_engine
 from student_journey.explainability.shap_utils import PersistenceExplainer, _encode_categoricals
 from student_journey.models.train import FEATURE_COLUMNS, MODELS_DIR
 
@@ -31,10 +32,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def sample_records():
-    import sqlite3
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql(f"SELECT * FROM {FEATURES_TABLE} WHERE persisted_next_term IS NOT NULL LIMIT 5", conn)
-    conn.close()
+    df = pd.read_sql(f"SELECT * FROM {FEATURES_TABLE} WHERE persisted_next_term IS NOT NULL LIMIT 5", get_engine())
     return df.to_dict(orient="records")
 
 

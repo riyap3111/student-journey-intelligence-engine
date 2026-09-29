@@ -108,19 +108,17 @@ def simulate_intervention_impact(
 
 if __name__ == "__main__":
     import json
-    import sqlite3
     import warnings
 
     import pandas as pd
 
-    from student_journey.config import DB_PATH, FEATURES_TABLE
+    from student_journey.config import FEATURES_TABLE
+    from student_journey.db import get_engine
     from student_journey.models.predict import PersistenceModel
     from student_journey.models.train import TARGET
 
     model = PersistenceModel()
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql(f"SELECT * FROM {FEATURES_TABLE} WHERE persisted_next_term IS NOT NULL", conn)
-    conn.close()
+    df = pd.read_sql(f"SELECT * FROM {FEATURES_TABLE} WHERE persisted_next_term IS NOT NULL", get_engine())
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning)

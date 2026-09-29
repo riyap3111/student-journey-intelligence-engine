@@ -1,5 +1,6 @@
 """Run the SQL data-quality checks in db/queries/validation.sql against the
-ingested SQLite database. Each check is a SELECT that must return zero rows.
+ingested database (SQLite by default, or PostgreSQL/Cloud SQL — see db.py).
+Each check is a SELECT that must return zero rows.
 
 Exits non-zero (and raises) if any check fails, so this can gate the pipeline
 (e.g. in CI or before feature engineering) rather than silently passing bad data.
@@ -10,10 +11,12 @@ Run:
 from __future__ import annotations
 
 import re
-import sqlite3
 import sys
 
-from student_journey.config import DB_PATH, QUERIES_DIR
+from sqlalchemy import text
+
+from student_journey.config import QUERIES_DIR
+from student_journey.db import get_engine
 
 VALIDATION_SQL_PATH = QUERIES_DIR / "validation.sql"
 CHECK_HEADER_RE = re.compile(r"--\s*CHECK:\s*(?P<name>\S+)\s*\|\s*(?P<description>.+)")
@@ -40,18 +43,17 @@ def parse_checks(sql_text: str) -> list[tuple[str, str, str]]:
     return checks
 
 
-def run_validation(db_path=DB_PATH) -> list[dict]:
+def run_validation(engine=None) -> list[dict]:
+    engine = engine or get_engine()
     sql_text = VALIDATION_SQL_PATH.read_text()
     checks = parse_checks(sql_text)
     if not checks:
         raise RuntimeError(f"No checks parsed from {VALIDATION_SQL_PATH} — check the file format.")
 
-    conn = sqlite3.connect(db_path)
     results = []
-    try:
+    with engine.connect() as conn:
         for name, description, query in checks:
-            cursor = conn.execute(query)
-            rows = cursor.fetchall()
+            rows = conn.execute(text(query)).fetchall()
             results.append({
                 "name": name,
                 "description": description,
@@ -59,8 +61,6 @@ def run_validation(db_path=DB_PATH) -> list[dict]:
                 "passed": len(rows) == 0,
                 "sample": rows[:5],
             })
-    finally:
-        conn.close()
     return results
 
 

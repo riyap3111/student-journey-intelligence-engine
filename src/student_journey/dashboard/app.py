@@ -9,8 +9,6 @@ Run:
 """
 from __future__ import annotations
 
-import sqlite3
-
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -18,8 +16,9 @@ from scipy.stats import ks_2samp
 
 from student_journey.analysis.intervention_simulation import simulate_intervention_impact
 from student_journey.api.schemas import API_DISCLAIMER
-from student_journey.config import DB_PATH, DOCS_SCREENSHOTS_DIR, FEATURES_TABLE
+from student_journey.config import DOCS_SCREENSHOTS_DIR, FEATURES_TABLE
 from student_journey.data.generate_synthetic_data import PROGRAMS
+from student_journey.db import get_engine
 from student_journey.explainability.shap_utils import PersistenceExplainer
 from student_journey.models.predict import PersistenceModel
 from student_journey.models.train import (
@@ -65,11 +64,7 @@ def get_explainer():
 
 @st.cache_data
 def get_features_df() -> pd.DataFrame:
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        return pd.read_sql(f"SELECT * FROM {FEATURES_TABLE}", conn)
-    finally:
-        conn.close()
+    return pd.read_sql(f"SELECT * FROM {FEATURES_TABLE}", get_engine())
 
 
 @st.cache_data

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 import joblib
 import pandas as pd
 
+from student_journey.cloud import storage as gcs_storage
 from student_journey.config import MODELS_DIR
 from student_journey.models.train import FEATURE_COLUMNS
 
@@ -58,6 +59,11 @@ class PersistenceModel:
     """Loads the trained pipeline + metadata once; reused across predictions."""
 
     def __init__(self, model_path=MODEL_PATH, metadata_path=METADATA_PATH):
+        if not model_path.exists() and gcs_storage.is_enabled():
+            # Cloud Run's filesystem is ephemeral — on a fresh instance the
+            # model trained (and possibly uploaded) elsewhere won't be on
+            # local disk yet. Try pulling it from GCS before giving up.
+            gcs_storage.download_model_artifacts(model_path.parent)
         if not model_path.exists():
             raise FileNotFoundError(f"{model_path} not found. Run `python -m student_journey.models.train` first.")
         self.pipeline = joblib.load(model_path)
@@ -97,15 +103,12 @@ class PersistenceModel:
 
 if __name__ == "__main__":
     # Smoke test: predict on a few rows straight from the features table.
-    import sqlite3
+    from student_journey.config import FEATURES_TABLE
+    from student_journey.db import get_engine
 
-    from student_journey.config import DB_PATH, FEATURES_TABLE
-
-    conn = sqlite3.connect(DB_PATH)
     sample = pd.read_sql(
-        f"SELECT * FROM {FEATURES_TABLE} WHERE persisted_next_term IS NOT NULL LIMIT 5", conn
+        f"SELECT * FROM {FEATURES_TABLE} WHERE persisted_next_term IS NOT NULL LIMIT 5", get_engine()
     )
-    conn.close()
 
     model = PersistenceModel()
     for record, result in zip(sample.to_dict(orient="records"), model.predict_batch(sample)):

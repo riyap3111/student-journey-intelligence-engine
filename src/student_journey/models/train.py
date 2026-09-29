@@ -48,7 +48,6 @@ Run:
 from __future__ import annotations
 
 import json
-import sqlite3
 import warnings
 from datetime import datetime, timezone
 
@@ -74,7 +73,9 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from student_journey.config import DB_PATH, FEATURES_TABLE, MLRUNS_DIR, MODELS_DIR, RANDOM_SEED
+from student_journey.cloud import storage as gcs_storage
+from student_journey.config import FEATURES_TABLE, MLRUNS_DIR, MODELS_DIR, RANDOM_SEED
+from student_journey.db import get_engine
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)  # keep console output focused on our own prints, not per-trial spam
 
@@ -112,12 +113,9 @@ VAL_MAX_TERM_ORDER = 14
 MODEL_VERSION = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
-def load_modeling_data(db_path=DB_PATH) -> pd.DataFrame:
-    conn = sqlite3.connect(db_path)
-    try:
-        df = pd.read_sql(f"SELECT * FROM {FEATURES_TABLE}", conn)
-    finally:
-        conn.close()
+def load_modeling_data(engine=None) -> pd.DataFrame:
+    engine = engine or get_engine()
+    df = pd.read_sql(f"SELECT * FROM {FEATURES_TABLE}", engine)
     return df[df[TARGET].notna()].copy()
 
 
@@ -414,6 +412,10 @@ def main() -> None:
 
     print(f"\nSaved calibrated pipeline -> {model_path}")
     print(f"Saved metadata -> {metadata_path}")
+
+    if gcs_storage.is_enabled():
+        uploaded = gcs_storage.upload_model_artifacts(MODELS_DIR)
+        print(f"Uploaded to gs://{gcs_storage.GCS_BUCKET_NAME}/{gcs_storage.GCS_MODEL_PREFIX}/: {uploaded}")
 
 
 if __name__ == "__main__":

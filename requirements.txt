@@ -16,6 +16,9 @@ prometheus-fastapi-instrumentator>=7.0
 streamlit>=1.33
 pydantic>=2.6
 plotly>=5.20
+sqlalchemy>=2.0
+psycopg2-binary>=2.9  # PostgreSQL/Cloud SQL driver; only used if DATABASE_URL is set
+google-cloud-storage>=2.10  # only used if GCS_BUCKET_NAME is set
 
 # dev / test
 pytest>=8.1

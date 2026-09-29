@@ -12,25 +12,19 @@ Run:
 """
 from __future__ import annotations
 
-import sqlite3
-
 import pandas as pd
 
-from student_journey.config import DB_PATH, FEATURES_PARQUET, FEATURES_TABLE, QUERIES_DIR
+from student_journey.config import FEATURES_PARQUET, FEATURES_TABLE, QUERIES_DIR
+from student_journey.db import execute_script, get_engine
 
 TRANSFORM_SQL_PATH = QUERIES_DIR / "transform.sql"
 
 MOMENTUM_WINDOW = 3  # number of trailing terms used for the academic_momentum trend
 
 
-def _load_base(db_path=DB_PATH) -> pd.DataFrame:
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.executescript(TRANSFORM_SQL_PATH.read_text())
-        df = pd.read_sql("SELECT * FROM enrollment_base ORDER BY student_id, term_number", conn)
-    finally:
-        conn.close()
-    return df
+def _load_base(engine) -> pd.DataFrame:
+    execute_script(engine, TRANSFORM_SQL_PATH.read_text())
+    return pd.read_sql("SELECT * FROM enrollment_base ORDER BY student_id, term_number", engine)
 
 
 def _academic_momentum(df: pd.DataFrame) -> pd.Series:
@@ -49,8 +43,9 @@ def _academic_momentum(df: pd.DataFrame) -> pd.Series:
     return momentum.fillna(0.0)
 
 
-def build_features(db_path=DB_PATH) -> pd.DataFrame:
-    df = _load_base(db_path)
+def build_features(engine=None) -> pd.DataFrame:
+    engine = engine or get_engine()
+    df = _load_base(engine)
     df["academic_momentum"] = _academic_momentum(df)
 
     # First-term rows have no prior GPA to diff against; 0 = "no observed change yet"
@@ -75,20 +70,16 @@ def build_features(db_path=DB_PATH) -> pd.DataFrame:
 
 
 def main() -> None:
-    features = build_features()
-
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        features.to_sql(FEATURES_TABLE, conn, if_exists="replace", index=False)
-    finally:
-        conn.close()
+    engine = get_engine()
+    features = build_features(engine)
+    features.to_sql(FEATURES_TABLE, engine, if_exists="replace", index=False)
 
     FEATURES_PARQUET.parent.mkdir(parents=True, exist_ok=True)
     features.to_parquet(FEATURES_PARQUET, index=False)
 
     labeled = features["persisted_next_term"].notna().sum()
     print(f"Built {len(features)} feature rows ({labeled} labeled) with {features.shape[1]} columns.")
-    print(f"  -> SQLite table '{FEATURES_TABLE}' in {DB_PATH}")
+    print(f"  -> table '{FEATURES_TABLE}' in {engine.url}")
     print(f"  -> {FEATURES_PARQUET}")
 
 
