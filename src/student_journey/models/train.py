@@ -295,7 +295,15 @@ def main() -> None:
                 k: v for k, v in metrics.items()
                 if isinstance(v, (int, float))
             })
-            mlflow.sklearn.log_model(pipeline, artifact_path="model")
+            # serialization_format="cloudpickle": newer MLflow defaults to "skops",
+            # whose security audit refuses to even log a RandomForest (flags
+            # sklearn.tree._tree.Tree as untrusted) — a real check worth having
+            # when loading someone ELSE's model file, but these are experiment-
+            # tracking copies of a model we just trained ourselves in this same
+            # process; the actual serving artifact is saved separately via
+            # joblib.dump below, not loaded from here. Caught when this first ran
+            # in CI against a freshly-installed MLflow (see git history).
+            mlflow.sklearn.log_model(pipeline, artifact_path="model", serialization_format="cloudpickle")
 
             val_results[name] = {
                 "pipeline": pipeline, "metrics": metrics, "val_prob": val_prob, "best_params": best_params,
@@ -320,7 +328,7 @@ def main() -> None:
             mlflow.log_param("model_type", "ensemble")
             mlflow.log_param("ensemble_members", list(tuned_members.keys()))
             mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, (int, float))})
-            mlflow.sklearn.log_model(ensemble, artifact_path="model")
+            mlflow.sklearn.log_model(ensemble, artifact_path="model", serialization_format="cloudpickle")
 
             val_results["ensemble"] = {"pipeline": ensemble, "metrics": metrics, "val_prob": val_prob}
             print(f"\n[ensemble] validation metrics: {json.dumps(metrics, indent=2)}")
@@ -384,7 +392,7 @@ def main() -> None:
         mlflow.log_param("calibration_method", "sigmoid")
         mlflow.log_metrics({k: v for k, v in test_metrics.items() if isinstance(v, (int, float))})
         mlflow.log_metric("brier_score_uncalibrated", test_metrics_uncalibrated["brier_score"])
-        mlflow.sklearn.log_model(calibrated_pipeline, artifact_path="model")
+        mlflow.sklearn.log_model(calibrated_pipeline, artifact_path="model", serialization_format="cloudpickle")
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODELS_DIR / "model_pipeline.joblib"
