@@ -8,10 +8,15 @@ Requires a trained model for the tabs that depend on one; run
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from student_journey.config import PROJECT_ROOT
 from student_journey.models.train import MODELS_DIR
 
 MODEL_EXISTS = (MODELS_DIR / "model_pipeline.joblib").exists()
-APP_PATH = "src/student_journey/dashboard/app.py"
+# Absolute path: newer Streamlit versions resolve a relative AppTest.from_file
+# path against the file that CALLS from_file (this test file, under tests/),
+# not the process's working directory — a real behavior difference caught
+# when this first ran in CI against a freshly-installed Streamlit.
+APP_PATH = str(PROJECT_ROOT / "src" / "student_journey" / "dashboard" / "app.py")
 
 TAB_NAMES = [
     "Overview", "Predict", "Risk Distribution", "Feature Importance",
