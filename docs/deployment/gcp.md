@@ -13,6 +13,11 @@
 - Two Cloud Run services from one container image (`scripts/docker-entrypoint.sh`
   picks API vs. dashboard via the `SERVICE_TYPE` env var, and always respects the
   `PORT` env var Cloud Run injects).
+- A third Cloud Run service for the React frontend (`frontend/Dockerfile`, a separate
+  nginx-based image), deployed *after* the API so its URL is known — the frontend
+  image reads `API_BASE_URL` from an env var at container startup
+  (`frontend/docker-entrypoint.sh`), not at build time, so it doesn't need rebuilding
+  when the API's URL changes.
 - A Cloud SQL (PostgreSQL) instance as the database, in place of local SQLite —
   the application code doesn't change; `DATABASE_URL` does (`db.py`).
 - A Cloud Storage bucket holding the trained model artifacts, since Cloud Run's
@@ -113,8 +118,18 @@ export STUDENT_JOURNEY_API_KEY="$(openssl rand -base64 32)" # optional but recom
 bash scripts/deploy_gcp.sh
 ```
 
-This builds the image with Cloud Build, pushes it to Artifact Registry, and deploys
-both Cloud Run services. It prints each service's URL at the end.
+This builds both images with Cloud Build, pushes them to Artifact Registry, and
+deploys all three Cloud Run services (api and dashboard first, then frontend once the
+API's URL is known). It prints each service's URL at the end.
+
+**One manual step this script doesn't do:** the API's `CORS_ALLOWED_ORIGINS` env var
+defaults to local dev origins only (see `main.py`). After the first deploy, set it to
+the frontend's actual URL (printed at the end of the script) so the deployed frontend
+can call the deployed API:
+```bash
+gcloud run services update student-journey-api --region "$GCP_REGION" \
+  --update-env-vars "CORS_ALLOWED_ORIGINS=$(gcloud run services describe student-journey-frontend --region "$GCP_REGION" --format='value(status.url)')"
+```
 
 ## Verify
 
@@ -127,6 +142,9 @@ service's GCS/Cloud SQL access isn't wired up correctly — check Cloud Run's lo
 (`gcloud run services logs read student-journey-api --region "$GCP_REGION"`) for the
 `[startup warning]` line `main.py` prints when it can't load a model.
 
+Open the frontend's own URL (printed at the end of the deploy script) in a browser to
+check the full stack, not just the API directly.
+
 ## Cost note
 
 Cloud Run scales to zero when idle (you only pay for actual request time), but Cloud
@@ -137,6 +155,7 @@ indefinitely:
 gcloud sql instances delete student-journey-db
 gcloud run services delete student-journey-api --region "$GCP_REGION"
 gcloud run services delete student-journey-dashboard --region "$GCP_REGION"
+gcloud run services delete student-journey-frontend --region "$GCP_REGION"
 gcloud storage rm -r "gs://${GCS_BUCKET_NAME}"
 ```
 

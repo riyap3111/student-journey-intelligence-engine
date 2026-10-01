@@ -43,14 +43,17 @@ flowchart TB
         E --> N
         J --> N
         M4 --> N
+        M -->|HTTP, CORS| N2["React frontend (Vite + TS + Tailwind): Overview, Predict, Model Info, Monitoring"]
     end
 
     subgraph Infra["Infra"]
         O[Docker: single image, SERVICE_TYPE switches api/dashboard]
-        P[GitHub Actions: lint + tests]
+        O2["Docker: frontend image (nginx), API_BASE_URL injected at container startup"]
+        P[GitHub Actions: lint + tests + frontend build]
         Q["GitHub Actions: deploy job (opt-in) -> Cloud Run"]
-        R[Cloud Run: api + dashboard services]
+        R[Cloud Run: api + dashboard + frontend services]
         O --> R
+        O2 --> R
         P --> Q
     end
 ```
@@ -89,6 +92,13 @@ flowchart TB
 - **Cloud Storage** persists model artifacts (including the drift reference) since
   Cloud Run's container filesystem is ephemeral — optional, gracefully disabled when
   `GCS_BUCKET_NAME` is unset.
-- **CI/CD**: GitHub Actions runs lint + the full test suite on every push/PR; a
-  second, opt-in job redeploys both Cloud Run services automatically after tests pass
-  on a push to `main`.
+- **CI/CD**: GitHub Actions runs lint + the full test suite (and, in a separate job,
+  the frontend's lint/test/build) on every push/PR; a third, opt-in job redeploys all
+  three Cloud Run services automatically after tests pass on a push to `main`.
+- **React frontend** (`frontend/`) is a separate SPA (Vite + TypeScript + Tailwind)
+  calling the FastAPI backend over HTTP/CORS — a product-style UI alongside the
+  Streamlit dashboard, not a replacement for it. Gets the API's base URL from a
+  runtime-injected `window.__ENV__` (written by its own `docker-entrypoint.sh` from an
+  `API_BASE_URL` env var at container startup) rather than a Vite build-time variable,
+  so the same built image works against any backend without rebuilding — necessary
+  because Cloud Run doesn't assign the API's URL until after it's deployed.

@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+:root {
+  --color-risk-low: #0ca30c;
+  --color-risk-medium: #fab219;
+  --color-risk-high: #d03b3b;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+#root {
+  @apply min-h-screen;
+}

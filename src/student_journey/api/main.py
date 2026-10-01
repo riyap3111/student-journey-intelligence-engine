@@ -40,10 +40,12 @@ Run:
 """
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -96,6 +98,20 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS: the React frontend (frontend/) runs on a different origin (Vite's
+# dev server, or a separately-deployed static site) and calls this API
+# directly from the browser, which CORS must explicitly allow. Defaults to
+# Vite's dev port; override with a comma-separated CORS_ALLOWED_ORIGINS for
+# a deployed frontend origin.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", _default_origins).split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
 
 app.add_middleware(AccessLogMiddleware)
 

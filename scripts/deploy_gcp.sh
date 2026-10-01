@@ -34,9 +34,17 @@ DB_NAME="${DB_NAME:-student_journey}"
 DB_USER="${DB_USER:-student_journey}"
 API_SERVICE_NAME="${API_SERVICE_NAME:-student-journey-api}"
 DASHBOARD_SERVICE_NAME="${DASHBOARD_SERVICE_NAME:-student-journey-dashboard}"
+FRONTEND_SERVICE_NAME="${FRONTEND_SERVICE_NAME:-student-journey-frontend}"
+FRONTEND_IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${REPO_NAME}/frontend:${IMAGE_TAG}"
 
 echo "== Building and pushing image via Cloud Build =="
 gcloud builds submit --project "$GCP_PROJECT_ID" --tag "$IMAGE_URI" .
+
+# Built once here, deployed with whatever API_BASE_URL is current at deploy
+# time below — this image never needs rebuilding just because the API's URL
+# changes (see frontend/docker-entrypoint.sh).
+echo "== Building and pushing frontend image via Cloud Build =="
+gcloud builds submit --project "$GCP_PROJECT_ID" --tag "$FRONTEND_IMAGE_URI" ./frontend
 
 # The Unix-socket form Cloud Run uses to reach an attached Cloud SQL
 # instance — not a TCP host:port, since Cloud Run mounts the Cloud SQL
@@ -70,11 +78,31 @@ gcloud run deploy "$DASHBOARD_SERVICE_NAME" \
   --set-env-vars "SERVICE_TYPE=dashboard" \
   --port 8080
 
+# The frontend needs the API's URL, which only exists after the deploy
+# above — this ordering (not a build-time arg) is exactly why the frontend
+# image takes its backend URL at container startup, not at build time.
+API_URL="$(gcloud run services describe "$API_SERVICE_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format='value(status.url)')"
+
+echo "== Deploying frontend service =="
+gcloud run deploy "$FRONTEND_SERVICE_NAME" \
+  --project "$GCP_PROJECT_ID" \
+  --region "$GCP_REGION" \
+  --image "$FRONTEND_IMAGE_URI" \
+  --set-env-vars "API_BASE_URL=${API_URL}" \
+  --memory 256Mi \
+  --allow-unauthenticated \
+  --port 80
+
 echo
 echo "Done. Note: a freshly deployed API/dashboard has no trained model yet —"
 echo "run the pipeline once (e.g. via a Cloud Run Job, or locally with"
 echo "DATABASE_URL/GCS_BUCKET_NAME pointed at the same Cloud SQL instance and"
 echo "GCS bucket) so a model lands in Cloud Storage before serving traffic."
 echo
+echo "Also: the API's CORS_ALLOWED_ORIGINS env var defaults to local dev"
+echo "origins only (see main.py) — set it to the frontend's URL below for the"
+echo "deployed frontend to actually be able to call the deployed API."
+echo
 gcloud run services describe "$API_SERVICE_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format="value(status.url)"
 gcloud run services describe "$DASHBOARD_SERVICE_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format="value(status.url)"
+gcloud run services describe "$FRONTEND_SERVICE_NAME" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format="value(status.url)"

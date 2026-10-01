@@ -43,6 +43,21 @@ services:
       - ./models:/app/models
       - ./mlruns:/app/mlruns
 
+  # React frontend (frontend/) — built separately since it's a different
+  # language/toolchain (Node, not Python), served as static files by nginx.
+  # API_BASE_URL is injected at container STARTUP (docker-entrypoint.sh), not
+  # baked in at build time — talks to the api service over HTTP from the
+  # browser, not container-to-container, so it needs the API's localhost
+  # URL, not Docker's internal service name.
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    environment:
+      - API_BASE_URL=http://localhost:8000
+    depends_on:
+      - api
+
   # Optional: a local PostgreSQL instance standing in for Cloud SQL, so the
   # PostgreSQL code path (db.py) can be exercised without a real GCP project.
   # Not started by default — run `docker compose --profile postgres up` to

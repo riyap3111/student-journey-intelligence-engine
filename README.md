@@ -25,6 +25,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 8. Advanced upgrades (gap-terms, calibration, tuning, ensembling, API hardening, intervention analysis) | ✅ done |
 | 9. Cloud deployment (Cloud Run, Cloud SQL, Cloud Storage) | ✅ code done — ⚠️ not executed against a real GCP project (see Phase 9) |
 | 10. Production monitoring (drift detection) + CI/CD auto-deploy | ✅ done (see Phase 10) |
+| 11. React frontend (product-style UI alongside the dashboard) | ✅ done (see Phase 11) |
 
 **Implemented vs. planned:** anything not checked off above is *planned*, not built.
 Any metric, screenshot, or claim in this README that isn't backed by code in this repo
@@ -77,17 +78,22 @@ student-journey-intelligence-engine/
 │   ├── explainability/           # shap_utils.py
 │   ├── analysis/                 # intervention_simulation.py
 │   ├── cloud/                    # storage.py (Google Cloud Storage, optional)
+│   ├── monitoring/               # drift.py (PSI), prediction_log.py
 │   ├── api/                      # main.py, schemas.py, model_loader.py, security.py, middleware.py
 │   └── dashboard/                # app.py
+├── frontend/                     # React + TypeScript + Vite + Tailwind SPA, calls the FastAPI backend
+│   ├── src/{pages,components,lib}
+│   ├── Dockerfile, docker-entrypoint.sh
+│   └── package.json
 ├── models/                       # serialized model + metadata (gitignored, regenerate via train.py)
 ├── mlruns/                       # MLflow tracking store (gitignored)
-├── tests/                        # 84 tests: data, features, models, explainability, API, dashboard, db, cloud, drift
+├── tests/                        # 84 Python tests + 9 frontend tests: data, features, models, explainability, API, dashboard, db, cloud, drift
 ├── docs/                         # architecture, model card, API examples, project summary, screenshots
 │   └── deployment/gcp.md         # Cloud Run + Cloud SQL + Cloud Storage deployment guide
 └── scripts/
     ├── run_pipeline.sh           # generate -> ingest -> validate -> build_features -> train -> evaluate
     ├── docker-entrypoint.sh      # picks API vs. dashboard + respects $PORT (local Docker and Cloud Run)
-    └── deploy_gcp.sh             # Cloud Run deployment (see docs/deployment/gcp.md)
+    └── deploy_gcp.sh             # Cloud Run deployment: api, dashboard, frontend (see docs/deployment/gcp.md)
 ```
 
 ## Setup
@@ -406,6 +412,69 @@ setup required to turn it on. Like the rest of Phase 9, this is written and revi
 against real `gcloud`/Actions syntax but never run against a real GitHub Actions
 execution with real GCP credentials — no GCP project was available in this project's
 development environment.
+
+### Phase 11: React frontend
+
+The Streamlit dashboard (Phase 6) is a fast way to explore data as a developer, but it
+reads as an internal data-science tool, not a product. [`frontend/`](frontend/) adds a
+separate React + TypeScript + Vite + Tailwind single-page app calling the same FastAPI
+backend over HTTP — four pages (Overview, Predict, Model Info, Monitoring) with a
+design meant to look like something you'd actually ship, not a notebook with widgets.
+The dashboard isn't removed; this is a second, independent frontend over the same API,
+not a replacement.
+
+- **Why a separate app instead of extending the dashboard:** Streamlit owns its own
+  rendering loop and can't be restyled into a custom product UI without fighting the
+  framework. A real frontend framework was the honest choice once "look like a real
+  product" was the actual goal, not a reason to add React for its own sake.
+- **Vite + React, not Next.js:** everything here is client-side-rendered data fetched
+  from a REST API at runtime — there's no content to server-render and no SEO
+  requirement, so Next.js's server-rendering machinery would be unused weight. Vite
+  gives the same modern DX (HMR, TypeScript, fast builds) for a pure SPA.
+- **Runtime-configured API URL, not a build-time env var.** Vite normally bakes
+  `VITE_API_BASE_URL` into the JS bundle at build time — fine for local dev, but a real
+  problem for Cloud Run, where the API's URL isn't known until *after* it's deployed,
+  and rebuilding the frontend image just to point it at a different backend would be
+  wasteful. Instead `index.html` loads `/env.js` before the app bundle, and
+  `docker-entrypoint.sh` regenerates that file from the container's `API_BASE_URL` env
+  var at **startup** — the same "one image, configured per-deployment by an env var"
+  pattern this project already uses for the API/dashboard split (`SERVICE_TYPE`).
+- **Verified against a real running backend, not just mocks:** both dev servers were
+  started together and a real `/predict` call was made through the same CORS path the
+  browser uses (`Origin: http://localhost:5173` against the API on `:8000`) — confirmed
+  a high-GPA, no-withdrawals record correctly predicts *low* risk with real SHAP
+  factors, not a canned response. `npm run test` (9 tests: component rendering, the API
+  client's error-message parsing for both array- and string-shaped FastAPI error
+  bodies, and a full Predict-form-submission flow against a mocked `fetch`) covers the
+  parts that don't need a live backend.
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173 — needs the API running separately, see below
+npm run test        # 9 tests
+npm run build        # type-checks (tsc -b) and produces dist/
+```
+
+Run both halves together locally:
+```bash
+# Terminal 1
+export PYTHONPATH=src && uvicorn student_journey.api.main:app --port 8000
+# Terminal 2
+cd frontend && npm run dev
+```
+
+**CORS** (`main.py`): the API allows `http://localhost:5173` by default
+(`CORS_ALLOWED_ORIGINS` env var) so local dev works with no extra setup; a deployed
+frontend's origin needs to be added explicitly.
+
+**Docker/Cloud Run:** `frontend/Dockerfile` is a multi-stage build (Node to compile,
+nginx to serve the static output — no Node runtime in the final image).
+`docker-compose.yml` adds a `frontend` service; `scripts/deploy_gcp.sh` deploys it as a
+third Cloud Run service, reading the just-deployed API's URL automatically. **Not
+executed** — no Docker daemon was available in this project's development environment,
+consistent with every other container-dependent claim in this README; the production
+`npm run build` *was* run and verified (see above).
 
 ## Responsible use
 
