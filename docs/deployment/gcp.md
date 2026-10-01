@@ -140,11 +140,58 @@ gcloud run services delete student-journey-dashboard --region "$GCP_REGION"
 gcloud storage rm -r "gs://${GCS_BUCKET_NAME}"
 ```
 
+## CI/CD: auto-deploy on merge to main
+
+`.github/workflows/ci.yml` has a second job, `deploy`, that runs `scripts/deploy_gcp.sh`
+automatically after the test job passes on a push to `main`. It's **off by default**
+(same pattern as every other optional feature in this project — XGBoost, GCS, Cloud
+SQL — off unless explicitly configured), gated on the `GCP_DEPLOY_ENABLED` repository
+variable. To turn it on:
+
+1. Create a dedicated deploy service account and grant it the roles CI needs to build
+   and deploy (narrower than your own gcloud login's likely permissions):
+   ```bash
+   gcloud iam service-accounts create student-journey-deployer \
+     --display-name="Student Journey CI/CD deployer"
+
+   for role in roles/run.admin roles/cloudbuild.builds.editor \
+               roles/artifactregistry.writer roles/iam.serviceAccountUser \
+               roles/storage.admin; do
+     gcloud projects add-iam-policy-binding "$GCP_PROJECT_ID" \
+       --member="serviceAccount:student-journey-deployer@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+       --role="$role"
+   done
+
+   gcloud iam service-accounts keys create deployer-key.json \
+     --iam-account="student-journey-deployer@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
+   ```
+   `deployer-key.json` is a long-lived credential — treat it like a password. Delete it
+   locally after pasting it into GitHub, and rotate it (delete + recreate the key) if
+   it's ever exposed.
+
+2. In the GitHub repo's **Settings → Secrets and variables → Actions**, add:
+
+   | Type | Name | Value |
+   |---|---|---|
+   | Secret | `GCP_SA_KEY` | contents of `deployer-key.json` |
+   | Secret | `DB_PASSWORD` | the Cloud SQL `student_journey` user's password (setup step 3) |
+   | Secret | `STUDENT_JOURNEY_API_KEY` | optional; a generated API key for the deployed service |
+   | Variable | `GCP_PROJECT_ID` | your GCP project id |
+   | Variable | `GCP_REGION` | e.g. `us-central1` |
+   | Variable | `CLOUDSQL_INSTANCE_CONNECTION_NAME` | from setup step 3 |
+   | Variable | `GCS_BUCKET_NAME` | from setup step 4 |
+   | Variable | `GCP_DEPLOY_ENABLED` | `true` |
+
+3. Merge to `main`. The `deploy` job builds and redeploys both Cloud Run services —
+   check the Actions tab for its output and the printed service URLs.
+
+This was written and reviewed but, like the rest of this deployment path, never run
+against a real GitHub Actions run with real GCP credentials (no GCP project was
+available in this project's development environment) — verify it end-to-end against
+your own project before trusting it.
+
 ## What's deliberately not built here
 
-- A CI/CD pipeline that deploys automatically on push (the existing
-  `.github/workflows/ci.yml` runs tests, not deployment — wiring `deploy_gcp.sh` into
-  a workflow triggered on merge to `main` is a natural extension, not built).
 - A scheduled retraining job (Cloud Run Jobs + Cloud Scheduler, or Cloud Composer for
   something more elaborate).
 - Secret Manager for `DB_PASSWORD`/`STUDENT_JOURNEY_API_KEY` instead of plain

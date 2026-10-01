@@ -24,6 +24,7 @@ This project is built in phases, each verified before moving to the next. Curren
 | 7. Testing & docs | ✅ done |
 | 8. Advanced upgrades (gap-terms, calibration, tuning, ensembling, API hardening, intervention analysis) | ✅ done |
 | 9. Cloud deployment (Cloud Run, Cloud SQL, Cloud Storage) | ✅ code done — ⚠️ not executed against a real GCP project (see Phase 9) |
+| 10. Production monitoring (drift detection) + CI/CD auto-deploy | ✅ done (see Phase 10) |
 
 **Implemented vs. planned:** anything not checked off above is *planned*, not built.
 Any metric, screenshot, or claim in this README that isn't backed by code in this repo
@@ -80,7 +81,7 @@ student-journey-intelligence-engine/
 │   └── dashboard/                # app.py
 ├── models/                       # serialized model + metadata (gitignored, regenerate via train.py)
 ├── mlruns/                       # MLflow tracking store (gitignored)
-├── tests/                        # 62 tests: data, features, models, explainability, API, dashboard, db, cloud
+├── tests/                        # 84 tests: data, features, models, explainability, API, dashboard, db, cloud, drift
 ├── docs/                         # architecture, model card, API examples, project summary, screenshots
 │   └── deployment/gcp.md         # Cloud Run + Cloud SQL + Cloud Storage deployment guide
 └── scripts/
@@ -188,9 +189,10 @@ pytest tests/test_api.py -v
 | `/predict` | POST | One student-term's engineered features → prediction + SHAP explanation. API key required if `STUDENT_JOURNEY_API_KEY` is set; rate-limited 60/minute per IP |
 | `/batch_predict` | POST | Up to 500 records in one call, each with an optional `record_id` echoed back for matching. Same auth; rate-limited 20/minute per IP |
 | `/model_info` | GET | Model version, features used, excluded demographic proxies, held-out test metrics |
+| `/monitoring/drift` | GET | Population Stability Index (PSI) drift report comparing recently-scored requests against the training distribution — *added in Phase 10* |
 | `/metrics` | GET | Prometheus-format metrics (request counts, latencies) — *added in Phase 8* |
 
-Every `/predict` and `/batch_predict` response includes `persistence_probability`, `risk_probability`, `risk_category`, `score_scale` (log-odds vs. probability — see Phase 8), `top_contributing_factors` (SHAP-based), `model_version`, and a `disclaimer` stating the prediction is for planning/advising support, not automated decision-making. Every request is also logged as a structured JSON line to stdout (method, path, status, latency, client IP — see Phase 8).
+Every `/predict` and `/batch_predict` response includes `persistence_probability`, `risk_probability`, `risk_category`, `score_scale` (log-odds vs. probability — see Phase 8), `top_contributing_factors` (SHAP-based), `model_version`, and a `disclaimer` stating the prediction is for planning/advising support, not automated decision-making. Every request is also logged as a structured JSON line to stdout (method, path, status, latency, client IP — see Phase 8), and best-effort recorded to a `prediction_log` database table that feeds `/monitoring/drift` (see Phase 10).
 
 **Design note:** `/predict` takes an already-*engineered* student-term record (GPA, cumulative credits, momentum, etc. — the same schema `build_features.py` produces), not raw multi-term history. Computing cumulative/trend features requires a student's full history, which belongs in the feature pipeline (Phase 2), not duplicated in the API layer — a realistic deployment has an upstream job call `build_features.py` and feed its output to this scoring service.
 
@@ -231,7 +233,7 @@ Nine tabs, each backed by real computed data (nothing hardcoded):
 5. **Persistence Trends** — term-over-term persistence rate, sparse terms (<20 students) dropped rather than shown as a misleadingly noisy rate.
 6. **Bottleneck Analysis** — withdrawal/repeat rates by term number and program. **Honestly scoped:** the dataset models student-terms, not individual courses, so there's no course-level table to analyze — this is stated on the tab itself, not glossed over.
 7. **Model Performance** — live metrics plus the saved confusion matrix and calibration plots.
-8. **Monitoring** — a real KS-statistic comparison of train-period vs. test-period feature distributions, explicitly labeled as illustrating the drift-check *method* (there's no live production traffic in a portfolio project to actually monitor).
+8. **Monitoring** — real PSI-based drift detection (see Phase 10) once the API has logged at least 30 requests; the tab checks the logged-request count and switches over automatically. Before that (a portfolio project's typical state — no live traffic yet), it falls back to a KS-statistic comparison of train-period vs. test-period feature distributions, explicitly labeled as illustrating the drift-check *method* rather than a live measurement.
 9. **Intervention Impact** *(added in Phase 8)* — a business-case sensitivity analysis with adjustable participation-rate and effect-size sliders; see Phase 8 below for what's real vs. assumed here.
 
 **Chart design:** built with Plotly using the dataviz skill's validated reference palette (unmodified, so no re-validation needed) — status colors (green/amber/red) mapped semantically to risk categories, a single sequential hue for magnitude-only rankings, fixed (never auto-cycled) categorical hues for multi-series comparisons, and no dual-axis charts.
@@ -248,7 +250,7 @@ Nine tabs, each backed by real computed data (nothing hardcoded):
 | `test_features.py` | Feature correctness, the leakage guardrail (no feature reads a future term) |
 | `test_model_training.py` | Metric computation, the time-aware split boundaries, risk-threshold bucketing |
 | `test_explainability.py` | The SHAP additivity property — exact, not approximate |
-| `test_api.py` | All 4 endpoints, input validation, graceful degradation without a model |
+| `test_api.py` | All 5 endpoints (incl. `/monitoring/drift`, Phase 10), input validation, graceful degradation without a model |
 | `test_dashboard.py` | All 8 tabs load without exception, the Predict form's submit path |
 
 **Docker:**
@@ -360,6 +362,50 @@ pytest tests/test_db.py tests/test_cloud_storage.py -v   # 10 tests, no real GCP
 docker compose --profile postgres up -d postgres
 # then uncomment the DATABASE_URL lines in docker-compose.yml for api/dashboard
 ```
+
+### Phase 10: production monitoring (drift detection) + CI/CD auto-deploy
+
+Two closing gaps from Phase 9's review: the dashboard's Monitoring tab was explicitly
+labeled "illustrative only, no live traffic to actually monitor," and cloud deploys
+were manual (`bash scripts/deploy_gcp.sh` by hand). Both are now real.
+
+**Drift detection** (`monitoring/drift.py`, `monitoring/prediction_log.py`):
+- Every `/predict` and `/batch_predict` call best-effort logs its input features to a
+  `prediction_log` table — the same SQLAlchemy engine as everything else (`db.py`), so
+  it works against SQLite locally or Cloud SQL in the cloud deployment with no separate
+  monitoring datastore. A logging failure can never fail or slow down the actual
+  prediction response it piggybacks on (wrapped in its own try/except).
+- `train.py` now also saves `reference_distribution.json` alongside the model:
+  per-feature training-set distributions (decile bins for numeric features, category
+  frequencies for categorical ones) — the fixed baseline recent traffic gets compared
+  against. It's included in the Phase 9 GCS upload/download list for free.
+- `GET /monitoring/drift` and the dashboard's Monitoring tab compute the **Population
+  Stability Index (PSI)** — the standard drift metric in production credit-risk and ML
+  scoring systems, not something invented for this project — per feature, using the
+  conventional thresholds (< 0.10 stable, 0.10–0.25 moderate shift, ≥ 0.25 significant
+  shift). Below 30 logged requests, it honestly reports `insufficient_data` rather than
+  a misleadingly precise number from too little traffic.
+- **Verified against a real running server, not just unit tests:** starting the API
+  fresh and calling `/monitoring/drift` correctly returns `insufficient_data` at 5
+  logged requests; sending 35 more identical requests (a deliberately unrealistic,
+  zero-variance traffic pattern) correctly flags every feature as `significant_shift`
+  against the real, varied training distribution — confirming the mechanism actually
+  detects population shift rather than always reporting "stable."
+
+```bash
+pytest tests/test_drift.py tests/test_prediction_log.py -v   # 25 tests, pure computation + a real temp SQLite DB
+pytest tests/ -v                                              # 84 tests, full suite
+```
+
+**CI/CD auto-deploy** (`.github/workflows/ci.yml`, [`docs/deployment/gcp.md`](docs/deployment/gcp.md)):
+a `deploy` job runs `scripts/deploy_gcp.sh` automatically after tests pass on a push to
+`main` — **off by default**, gated on a `GCP_DEPLOY_ENABLED` repository variable, the
+same "opt-in, never breaks the default path" pattern as every other optional feature in
+this project. See the deployment doc for the exact GitHub secrets/variables and IAM
+setup required to turn it on. Like the rest of Phase 9, this is written and reviewed
+against real `gcloud`/Actions syntax but never run against a real GitHub Actions
+execution with real GCP credentials — no GCP project was available in this project's
+development environment.
 
 ## Responsible use
 

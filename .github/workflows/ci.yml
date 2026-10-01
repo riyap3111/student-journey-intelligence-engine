@@ -35,3 +35,33 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ -v
+
+  deploy:
+    name: Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    needs: test
+    # Off by default (this repo's established pattern for anything that costs
+    # money or needs real credentials — see cloud/storage.py, db.py). Turn on
+    # by setting the GCP_DEPLOY_ENABLED repository VARIABLE to "true" and
+    # configuring the secrets/variables below — see docs/deployment/gcp.md.
+    # Without that, this job is skipped and CI behaves exactly as before.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.GCP_DEPLOY_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy via scripts/deploy_gcp.sh
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          CLOUDSQL_INSTANCE_CONNECTION_NAME: ${{ vars.CLOUDSQL_INSTANCE_CONNECTION_NAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
+          STUDENT_JOURNEY_API_KEY: ${{ secrets.STUDENT_JOURNEY_API_KEY }}
+        run: bash scripts/deploy_gcp.sh

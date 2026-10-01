@@ -169,9 +169,13 @@ Every explanation and API response repeats this.
 - Single simulated "institution" with one set of enrollment dynamics; no
   cross-institution variation is modeled.
 - Time-aware split covers a 20-term synthetic calendar; long-run drift over many
-  more real academic years is untested (the dashboard's Monitoring tab demonstrates
-  the drift-check *method* using the train/test split as a stand-in, since there's
-  no live deployment generating real traffic to monitor).
+  more real academic years is untested. Real, PSI-based feature-drift monitoring is
+  implemented (`GET /monitoring/drift`, the dashboard's Monitoring tab — see Phase 10
+  in the README) and activates automatically once ~30+ requests have been logged; it
+  has been verified to correctly flag a deliberately anomalous traffic pattern, but
+  has never observed genuine multi-year drift, since no real deployment has run that
+  long. Below the logging threshold it falls back to illustrating the drift-check
+  *method* using the train/test split as a stand-in.
 - The intervention-impact analysis (`analysis/intervention_simulation.py`, the
   dashboard's Intervention Impact tab) is a sensitivity analysis over **assumed**
   participation-rate and effect-size parameters — this dataset has no recorded
@@ -211,7 +215,9 @@ Every explanation and API response repeats this.
   scope for and not implemented by this repository. The API's optional key-based auth
   and rate limiting are a starting point for access control, not a substitute for
   that review.
-- **Drift:** a real deployment would need ongoing monitoring for data drift and
-  periodic re-evaluation/re-calibration; this repository implements the training and
-  evaluation pipeline that such monitoring would sit on top of, and demonstrates the
-  drift-check method (dashboard Monitoring tab), but not a real monitoring system.
+- **Drift:** implemented — `GET /monitoring/drift` and the dashboard's Monitoring tab
+  compute the Population Stability Index per feature against the training
+  distribution once enough requests have been logged (Phase 10). What's still not
+  implemented: an automated *response* to detected drift (alerting, a retraining
+  trigger, or automatic model rollback) — detecting drift and acting on it are
+  different problems, and only the former is built here.

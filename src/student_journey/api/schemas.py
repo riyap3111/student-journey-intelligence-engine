@@ -144,3 +144,28 @@ class ModelInfoResponse(BaseModel):
     risk_thresholds: dict
     test_metrics: dict
     disclaimer: str = API_DISCLAIMER
+
+
+DRIFT_DISCLAIMER = (
+    "PSI (Population Stability Index) compares recently-scored requests against the training "
+    "set's feature distributions. PSI < 0.10 = stable, 0.10-0.25 = moderate shift worth "
+    "investigating, >= 0.25 = significant shift where retraining should be considered. This "
+    "flags that the INPUT population looks different from training — it does not by itself mean "
+    "the model's predictions are wrong, and it is not a substitute for tracking actual outcomes."
+)
+
+
+class FeatureDriftDetail(BaseModel):
+    feature: str
+    feature_type: Literal["numeric", "categorical"]
+    psi: Optional[float] = Field(None, description="Population Stability Index; null if not enough data yet")
+    status: Literal["stable", "moderate_shift", "significant_shift", "insufficient_data"]
+
+
+class DriftReportResponse(BaseModel):
+    overall_status: Literal["stable", "moderate_shift", "significant_shift", "insufficient_data"]
+    n_reference_rows: Optional[int] = Field(None, description="Rows in the training-set reference distribution")
+    n_current_rows: int = Field(..., description="Recently-logged prediction requests compared against reference")
+    min_samples_required: int
+    features: list[FeatureDriftDetail]
+    disclaimer: str = DRIFT_DISCLAIMER

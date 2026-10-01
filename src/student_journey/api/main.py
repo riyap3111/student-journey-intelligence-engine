@@ -1,10 +1,11 @@
 """FastAPI service exposing the trained persistence model.
 
 Endpoints:
-    GET  /health          liveness/readiness check
+    GET  /health           liveness/readiness check
     POST /predict          single student-term prediction + explanation
     POST /batch_predict     up to 500 records in one call
     GET  /model_info        model version, features, held-out test metrics
+    GET  /monitoring/drift  PSI feature-drift report vs. the training distribution
     GET  /metrics           Prometheus metrics (request counts, latencies)
 
 The model and SHAP explainer are loaded once at startup (see model_loader.py)
@@ -22,6 +23,17 @@ Production hardening (see security.py, middleware.py):
   - Structured JSON access logging for every request (method, path, status,
     latency, client IP) to stdout.
   - Prometheus-compatible /metrics endpoint.
+
+Monitoring (see monitoring/drift.py, monitoring/prediction_log.py):
+  - Every /predict and /batch_predict call best-effort logs its input
+    features + prediction to a `prediction_log` table (SQLite locally,
+    Cloud SQL in the cloud deployment). A logging failure never fails or
+    slows the prediction response itself.
+  - GET /monitoring/drift compares the most recently logged requests'
+    feature distributions against the training set's, using the Population
+    Stability Index (PSI) — the standard drift metric in production ML
+    scoring systems. Returns "insufficient_data" until enough requests have
+    been logged (see monitoring/drift.py's DEFAULT_MIN_SAMPLES).
 
 Run:
     uvicorn student_journey.api.main:app --reload --port 8000
@@ -45,16 +57,21 @@ from student_journey.api.schemas import (
     BatchPredictRequest,
     BatchPredictResponse,
     ContributingFactor,
+    DriftReportResponse,
     HealthResponse,
     ModelInfoResponse,
     PredictionResponse,
     StudentTermFeatures,
 )
 from student_journey.api.security import require_api_key
+from student_journey.config import MODELS_DIR
+from student_journey.db import get_engine
+from student_journey.monitoring import drift, prediction_log
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.db_engine = get_engine()
     try:
         app.state.model_bundle = ModelBundle()
         app.state.load_error = None
@@ -129,6 +146,17 @@ def _score(record_dict: dict, bundle: ModelBundle) -> tuple:
         ContributingFactor(feature=f["feature"], contribution=f["contribution"], direction=f["direction"])
         for f in explanation["top_factors"]
     ]
+
+    # Best-effort: a monitoring-log write must never fail or slow down the
+    # actual prediction response it's piggybacking on.
+    try:
+        prediction_log.log_prediction(
+            app.state.db_engine, record_dict, bundle.model_version,
+            prediction.persistence_probability, prediction.risk_category,
+        )
+    except Exception as exc:
+        print(f"[monitoring warning] Failed to log prediction: {exc}", file=sys.stderr)
+
     return prediction, factors, explanation["score_scale"]
 
 
@@ -172,3 +200,16 @@ def batch_predict(
             )
         )
     return BatchPredictResponse(predictions=items)
+
+
+@app.get("/monitoring/drift", response_model=DriftReportResponse)
+def monitoring_drift(bundle: ModelBundle = Depends(get_model_bundle)) -> DriftReportResponse:
+    reference = drift.load_reference_distribution(MODELS_DIR)
+    if reference is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No reference distribution found. Run `python -m student_journey.models.train` (it saves one alongside the model).",
+        )
+    current_df = prediction_log.load_recent_features(app.state.db_engine)
+    report = drift.compute_drift_report(current_df, reference)
+    return DriftReportResponse(**report)

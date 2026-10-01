@@ -76,6 +76,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from student_journey.cloud import storage as gcs_storage
 from student_journey.config import FEATURES_TABLE, MLRUNS_DIR, MODELS_DIR, RANDOM_SEED
 from student_journey.db import get_engine
+from student_journey.monitoring.drift import build_reference_distribution
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)  # keep console output focused on our own prints, not per-trial spam
 
@@ -410,8 +411,17 @@ def main() -> None:
     metadata_path = MODELS_DIR / "model_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
 
+    # Reference distribution for drift detection (monitoring/drift.py):
+    # built from TRAIN only (never val/test) since it represents "the
+    # population this model was fit to expect" — the fixed baseline that
+    # actual incoming API traffic gets compared against later.
+    reference_distribution = build_reference_distribution(X_train, NUMERIC_FEATURES, CATEGORICAL_FEATURES)
+    reference_path = MODELS_DIR / "reference_distribution.json"
+    reference_path.write_text(json.dumps(reference_distribution, indent=2))
+
     print(f"\nSaved calibrated pipeline -> {model_path}")
     print(f"Saved metadata -> {metadata_path}")
+    print(f"Saved drift-detection reference distribution -> {reference_path}")
 
     if gcs_storage.is_enabled():
         uploaded = gcs_storage.upload_model_artifacts(MODELS_DIR)

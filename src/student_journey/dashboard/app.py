@@ -15,8 +15,8 @@ import streamlit as st
 from scipy.stats import ks_2samp
 
 from student_journey.analysis.intervention_simulation import simulate_intervention_impact
-from student_journey.api.schemas import API_DISCLAIMER
-from student_journey.config import DOCS_SCREENSHOTS_DIR, FEATURES_TABLE
+from student_journey.api.schemas import API_DISCLAIMER, DRIFT_DISCLAIMER
+from student_journey.config import DOCS_SCREENSHOTS_DIR, FEATURES_TABLE, MODELS_DIR
 from student_journey.data.generate_synthetic_data import PROGRAMS
 from student_journey.db import get_engine
 from student_journey.explainability.shap_utils import PersistenceExplainer
@@ -26,6 +26,7 @@ from student_journey.models.train import (
     TRAIN_MAX_TERM_ORDER,
     VAL_MAX_TERM_ORDER,
 )
+from student_journey.monitoring import drift, prediction_log
 
 # Validated categorical / status palette — the dataviz skill's reference
 # instance, used unmodified (already passes every colorblind-safety and
@@ -343,12 +344,45 @@ def render_model_performance(model):
         st.info("Run `python -m student_journey.models.evaluate` to generate these plots.")
 
 
+DRIFT_STATUS_COLOR = {
+    "stable": STATUS["good"], "moderate_shift": STATUS["warning"],
+    "significant_shift": STATUS["critical"], "insufficient_data": "#9aa0a6",
+}
+
+
 def render_monitoring(features_df):
+    reference = drift.load_reference_distribution(MODELS_DIR)
+    engine = get_engine()
+    recent = prediction_log.load_recent_features(engine)
+    n_logged = len(recent)
+
+    if reference is not None and n_logged >= drift.DEFAULT_MIN_SAMPLES:
+        st.caption(DRIFT_DISCLAIMER)
+        report = drift.compute_drift_report(recent, reference)
+        c1, c2 = st.columns(2)
+        c1.metric("Overall drift status", report["overall_status"].replace("_", " ").title())
+        c2.metric("Requests compared", f"{report['n_current_rows']:,} (of {report['n_reference_rows']:,} training rows)")
+
+        feature_df = pd.DataFrame(report["features"])
+        feature_df["psi"] = feature_df["psi"].fillna(0.0)
+        fig = px.bar(
+            feature_df, x="feature", y="psi", color="status",
+            color_discrete_map=DRIFT_STATUS_COLOR,
+            title="Population Stability Index by feature (recent API requests vs. training distribution)",
+        )
+        fig.add_hline(y=drift.PSI_WARNING_THRESHOLD, line_dash="dot", annotation_text="moderate shift")
+        fig.add_hline(y=drift.PSI_ALERT_THRESHOLD, line_dash="dot", annotation_text="significant shift")
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(feature_df, use_container_width=True)
+        return
+
     st.caption(
-        "**Illustrative only.** This is a portfolio project with no live deployment generating new "
-        "production traffic to monitor. This section demonstrates the drift-check *method* by comparing "
-        "the training period's feature distributions against the held-out test period's — a real "
-        "deployment would instead compare training data against actual incoming requests over time."
+        f"**Illustrative only — not enough live traffic yet.** Real PSI-based drift monitoring (above threshold: "
+        f"{drift.DEFAULT_MIN_SAMPLES} logged requests) activates automatically once the API has scored enough "
+        f"requests — currently {n_logged}. Call `POST /predict` a few dozen times against a running API "
+        "(`uvicorn student_journey.api.main:app`) to see it switch over. Until then, this section demonstrates "
+        "the drift-check *method* by comparing the training period's feature distributions against the "
+        "held-out test period's."
     )
     if features_df is None:
         return

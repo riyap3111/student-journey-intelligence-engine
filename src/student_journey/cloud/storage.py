@@ -28,7 +28,7 @@ from google.cloud import storage
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME")
 GCS_MODEL_PREFIX = os.environ.get("GCS_MODEL_PREFIX", "models")
 
-MODEL_ARTIFACT_FILENAMES = ["model_pipeline.joblib", "model_metadata.json"]
+MODEL_ARTIFACT_FILENAMES = ["model_pipeline.joblib", "model_metadata.json", "reference_distribution.json"]
 
 
 def is_enabled() -> bool:
@@ -64,9 +64,9 @@ def download_file(local_path: Path, blob_name: str) -> bool:
 
 
 def upload_model_artifacts(model_dir: Path) -> list[str]:
-    """Uploads model_pipeline.joblib and model_metadata.json if present
-    locally. Returns the filenames actually uploaded (empty if GCS is
-    disabled or neither file exists yet)."""
+    """Uploads whichever of MODEL_ARTIFACT_FILENAMES are present locally.
+    Returns the filenames actually uploaded (empty if GCS is disabled or
+    none of the files exist yet)."""
     uploaded = []
     for filename in MODEL_ARTIFACT_FILENAMES:
         local_path = model_dir / filename
@@ -76,10 +76,9 @@ def upload_model_artifacts(model_dir: Path) -> list[str]:
 
 
 def download_model_artifacts(model_dir: Path) -> list[str]:
-    """Downloads model_pipeline.joblib and model_metadata.json from GCS if
-    they're not already present locally. Returns the filenames actually
-    downloaded (empty if GCS is disabled, already present locally, or not
-    yet uploaded)."""
+    """Downloads whichever of MODEL_ARTIFACT_FILENAMES aren't already present
+    locally. Returns the filenames actually downloaded (empty if GCS is
+    disabled, already present locally, or not yet uploaded)."""
     downloaded = []
     for filename in MODEL_ARTIFACT_FILENAMES:
         local_path = model_dir / filename

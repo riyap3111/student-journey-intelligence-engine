@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from student_journey.models.train import MODELS_DIR
 
 MODEL_EXISTS = (MODELS_DIR / "model_pipeline.joblib").exists()
+REFERENCE_EXISTS = (MODELS_DIR / "reference_distribution.json").exists()
 
 VALID_RECORD = {
     "term_number": 3,
@@ -169,6 +170,31 @@ def test_metrics_endpoint_exposes_prometheus_format(client):
     r = client.get("/metrics")
     assert r.status_code == 200
     assert "# HELP" in r.text or "# TYPE" in r.text
+
+
+@pytest.mark.skipif(
+    not MODEL_EXISTS or not REFERENCE_EXISTS,
+    reason="No trained model/reference distribution; run `python -m student_journey.models.train`.",
+)
+def test_drift_endpoint_returns_a_well_formed_report(client):
+    client.post("/predict", json=VALID_RECORD)  # ensure at least one row is logged to compare against
+    r = client.get("/monitoring/drift")
+    assert r.status_code == 200
+    body = r.json()
+    valid_statuses = {"stable", "moderate_shift", "significant_shift", "insufficient_data"}
+    assert body["overall_status"] in valid_statuses
+    assert body["n_current_rows"] >= 1
+    assert len(body["features"]) > 0
+    assert all(f["status"] in valid_statuses for f in body["features"])
+
+
+@pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
+def test_drift_endpoint_503_when_no_reference_distribution(client, monkeypatch):
+    import student_journey.api.main as main_module
+
+    monkeypatch.setattr(main_module.drift, "load_reference_distribution", lambda models_dir: None)
+    r = client.get("/monitoring/drift")
+    assert r.status_code == 503
 
 
 def test_rate_limiting_mechanism_returns_429_when_exceeded():

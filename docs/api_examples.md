@@ -129,6 +129,33 @@ curl -s -X POST http://localhost:8000/batch_predict \
 ```
 Each item in `predictions` echoes back its `record_id` for matching against the request, and the higher-GPA example ("example-2") predicts a lower risk probability than the first — a basic sanity property asserted directly in `tests/test_api.py::test_batch_predict_echoes_record_ids`.
 
+## GET /monitoring/drift (added in Phase 10)
+
+```bash
+curl -s http://localhost:8000/monitoring/drift | python3 -m json.tool
+```
+Before the API has logged at least 30 requests (`prediction_log` table — every `/predict`/`/batch_predict`
+call best-effort logs its input features):
+```json
+{
+  "overall_status": "insufficient_data",
+  "n_reference_rows": 10943,
+  "n_current_rows": 5,
+  "min_samples_required": 30,
+  "features": [
+    {"feature": "term_gpa", "feature_type": "numeric", "psi": null, "status": "insufficient_data"}
+  ]
+}
+```
+This is real output from a live run: after sending 35 more requests with deliberately identical
+(zero-variance) feature values — an unrealistic traffic pattern, used here specifically to prove the
+mechanism actually detects a shift rather than always reporting "stable" — every feature correctly
+flipped to `significant_shift` against the real, varied training distribution:
+```json
+{"overall_status": "significant_shift", "n_current_rows": 40, "...": "..."}
+```
+See the Phase 10 section of the main README for what PSI is and why it (not a simpler KS-test) was used.
+
 ## GET /metrics (added in Phase 8)
 
 ```bash

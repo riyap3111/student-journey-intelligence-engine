@@ -6,7 +6,7 @@ no-op when GCS_BUCKET_NAME is unset, not that a real bucket round-trips
 correctly. See storage.py's module docstring for that caveat.
 """
 import importlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import student_journey.cloud.storage as gcs_storage
 
@@ -96,7 +96,8 @@ def test_download_model_artifacts_skips_files_already_present_locally(tmp_path, 
     importlib.reload(gcs_storage)
     try:
         (tmp_path / "model_pipeline.joblib").write_text("already here")
-        # model_metadata.json is NOT present locally
+        # The other MODEL_ARTIFACT_FILENAMES are NOT present locally.
+        expected_missing = [f for f in gcs_storage.MODEL_ARTIFACT_FILENAMES if f != "model_pipeline.joblib"]
 
         mock_blob = MagicMock()
         mock_blob.exists.return_value = True
@@ -108,8 +109,10 @@ def test_download_model_artifacts_skips_files_already_present_locally(tmp_path, 
         with patch("student_journey.cloud.storage.storage.Client", return_value=mock_client):
             downloaded = gcs_storage.download_model_artifacts(tmp_path)
 
-        assert downloaded == ["model_metadata.json"]
-        mock_bucket.blob.assert_called_once_with("models/model_metadata.json")
+        assert downloaded == expected_missing
+        mock_bucket.blob.assert_has_calls([call(f"models/{f}") for f in expected_missing], any_order=True)
+        assert mock_bucket.blob.call_count == len(expected_missing)
     finally:
         monkeypatch.delenv("GCS_BUCKET_NAME", raising=False)
+        importlib.reload(gcs_storage)
         importlib.reload(gcs_storage)
