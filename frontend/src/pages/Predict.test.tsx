@@ -31,7 +31,8 @@ describe("Predict page", () => {
     await userEvent.click(screen.getByRole("button", { name: /predict/i }));
 
     await waitFor(() => expect(screen.getByText("MEDIUM RISK")).toBeInTheDocument());
-    expect(screen.getByText(/65\.0%/)).toBeInTheDocument();
+    expect(screen.getByText("65")).toBeInTheDocument(); // RiskGauge's persistence-probability readout
+    expect(screen.getByText(/35\.0%/)).toBeInTheDocument(); // risk probability text
     expect(screen.getByText(/test-version/)).toBeInTheDocument();
   });
 

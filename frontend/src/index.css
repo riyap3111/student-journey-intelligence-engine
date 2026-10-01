@@ -1,15 +1,114 @@
 @import "tailwindcss";
 
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
 :root {
-  --color-risk-low: #0ca30c;
-  --color-risk-medium: #fab219;
-  --color-risk-high: #d03b3b;
+  --bg-void: #06070d;
+  --bg-base: #0b0d16;
+  --bg-surface: #11131f;
+  --bg-surface-hover: #161926;
+  --border-subtle: rgba(148, 163, 184, 0.12);
+  --border-strong: rgba(148, 163, 184, 0.24);
+
+  --accent: #8b5cf6;
+  --accent-bright: #a78bfa;
+  --accent-soft: rgba(139, 92, 246, 0.14);
+  --accent-glow: rgba(139, 92, 246, 0.35);
+
+  --cyan: #22d3ee;
+  --cyan-soft: rgba(34, 211, 238, 0.14);
+
+  --risk-low: #34d399;
+  --risk-low-soft: rgba(52, 211, 153, 0.14);
+  --risk-medium: #fbbf24;
+  --risk-medium-soft: rgba(251, 191, 36, 0.14);
+  --risk-high: #fb7185;
+  --risk-high-soft: rgba(251, 113, 133, 0.14);
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #5f6b81;
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  background: var(--bg-void);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(139, 92, 246, 0.18), transparent),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(34, 211, 238, 0.1), transparent);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
 #root {
-  @apply min-h-screen;
+  min-height: 100vh;
+}
+
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.font-mono-ui {
+  font-family: var(--font-mono);
+}
+
+/* Glass panel: the project's one reused surface treatment, used by every
+   card/form/section so the UI reads as one consistent system. */
+.glass-panel {
+  background: linear-gradient(180deg, var(--bg-surface), var(--bg-base));
+  border: 1px solid var(--border-subtle);
+  border-radius: 1rem;
+  box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.03) inset, 0 20px 40px -24px rgba(0, 0, 0, 0.6);
+}
+
+.glow-ring {
+  box-shadow: 0 0 0 1px var(--border-strong), 0 0 24px -4px var(--accent-glow);
+}
+
+::selection {
+  background: var(--accent-glow);
+}
+
+/* Custom range slider: the default browser control clashes badly with a
+   dark glass UI, so it's restyled once here rather than per-input. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) var(--range-progress, 50%), var(--border-strong) var(--range-progress, 50%));
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  margin-top: -6px;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent-bright);
+  box-shadow: 0 0 0 4px var(--accent-soft), 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2.4s ease-in-out infinite;
 }

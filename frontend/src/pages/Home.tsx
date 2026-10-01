@@ -22,23 +22,36 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+    <div className="mx-auto max-w-5xl space-y-8 px-4 py-14">
       <div>
-        <h1 className="text-3xl font-bold text-slate-900">Student Journey Intelligence Engine</h1>
-        <p className="mt-2 max-w-3xl text-slate-600">
-          Predicts whether a student is likely to continue enrollment next term, explains the main
-          contributing factors, and surfaces live feature-drift monitoring — served by a FastAPI
-          backend and this React frontend.
+        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--border-subtle)] bg-white/[0.02] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent-bright)]" />
+          Portfolio ML system · synthetic data
+        </div>
+        <h1 className="font-display text-4xl font-bold leading-tight text-[var(--text-primary)] sm:text-5xl">
+          Predicting student{" "}
+          <span className="bg-gradient-to-r from-[var(--accent-bright)] to-[var(--cyan)] bg-clip-text text-transparent">
+            persistence
+          </span>
+          , explained.
+        </h1>
+        <p className="mt-4 max-w-2xl text-[var(--text-secondary)]">
+          An ensemble model estimates whether a student continues enrollment next term, explains the
+          factors behind every prediction with SHAP, and ships with live feature-drift monitoring — served
+          by a FastAPI backend and this React frontend.
         </p>
       </div>
 
       <PrivacyNotice />
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          Can't reach the API at <code className="rounded bg-red-100 px-1">{import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"}</code>.
-          Start it with:
-          <pre className="mt-2 overflow-x-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
+        <div className="glass-panel border-[var(--risk-high)]/30 p-4 text-sm text-[var(--text-secondary)]">
+          Can't reach the API at{" "}
+          <code className="font-mono-ui rounded bg-white/5 px-1.5 py-0.5 text-[var(--risk-high)]">
+            {import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"}
+          </code>
+          . Start it with:
+          <pre className="font-mono-ui mt-2 overflow-x-auto rounded-lg border border-[var(--border-subtle)] bg-black/30 p-3 text-xs text-[var(--text-secondary)]">
             export PYTHONPATH=src{"\n"}uvicorn student_journey.api.main:app --port 8000
           </pre>
         </div>
@@ -51,14 +64,16 @@ export default function Home() {
             label="Model loaded"
             value={health.model_loaded ? "Yes" : "No"}
             caption={health.model_version ?? undefined}
+            accent="cyan"
           />
           {modelInfo && (
             <>
+              <StatCard label="Test ROC-AUC" value={Number(modelInfo.test_metrics.roc_auc).toFixed(3)} />
               <StatCard
-                label="Test ROC-AUC"
-                value={Number(modelInfo.test_metrics.roc_auc).toFixed(3)}
+                label="Model type"
+                value={modelInfo.model_type.replace("_", " ")}
+                accent="cyan"
               />
-              <StatCard label="Model type" value={modelInfo.model_type.replace("_", " ")} />
             </>
           )}
         </div>
@@ -67,13 +82,13 @@ export default function Home() {
       <div className="flex flex-wrap gap-3 pt-2">
         <Link
           to="/predict"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-white shadow-[0_0_24px_-4px_var(--accent-glow)] transition-transform hover:scale-[1.02] hover:bg-[var(--accent-bright)]"
         >
           Try a prediction →
         </Link>
         <Link
           to="/monitoring"
-          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+          className="rounded-full border border-[var(--border-strong)] bg-white/[0.02] px-5 py-2.5 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-white/5"
         >
           View drift monitoring
         </Link>
@@ -81,7 +96,7 @@ export default function Home() {
           href="https://github.com/riyap3111/student-journey-intelligence-engine"
           target="_blank"
           rel="noreferrer"
-          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+          className="rounded-full border border-[var(--border-strong)] bg-white/[0.02] px-5 py-2.5 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-white/5"
         >
           View source on GitHub
         </a>

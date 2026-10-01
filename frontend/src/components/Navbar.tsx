@@ -7,20 +7,47 @@ const LINKS = [
   { to: "/monitoring", label: "Monitoring" },
 ];
 
+function Mark() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M3 17 9 9l4 4 8-10"
+        stroke="url(#mark-gradient)"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <defs>
+        <linearGradient id="mark-gradient" x1="3" y1="20" x2="21" y2="3">
+          <stop stopColor="#a78bfa" />
+          <stop offset="1" stopColor="#22d3ee" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
 export default function Navbar() {
   return (
-    <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-        <div className="font-semibold text-slate-900">Student Journey Intelligence Engine</div>
-        <nav className="flex gap-1">
+    <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[var(--bg-void)]/80 backdrop-blur-lg">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3.5">
+        <div className="flex items-center gap-2">
+          <Mark />
+          <span className="font-display text-sm font-semibold tracking-tight text-[var(--text-primary)]">
+            Student Journey<span className="text-[var(--accent-bright)]">.</span>
+          </span>
+        </div>
+        <nav className="flex gap-1 rounded-full border border-[var(--border-subtle)] bg-white/[0.02] p-1">
           {LINKS.map((link) => (
             <NavLink
               key={link.to}
               to={link.to}
               end={link.end}
               className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                  isActive ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                `rounded-full px-3.5 py-1.5 text-sm font-medium transition-all ${
+                  isActive
+                    ? "bg-[var(--accent)] text-white shadow-[0_0_16px_-2px_var(--accent-glow)]"
+                    : "text-[var(--text-secondary)] hover:bg-white/5 hover:text-[var(--text-primary)]"
                 }`
               }
             >
