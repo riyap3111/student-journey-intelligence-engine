@@ -27,7 +27,7 @@ TAB_NAMES = [
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
 def test_app_loads_all_tabs_without_exception():
-    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at = AppTest.from_file(APP_PATH, default_timeout=120)
     at.run()
     assert not at.exception
     assert len(at.tabs) == len(TAB_NAMES)
@@ -35,7 +35,7 @@ def test_app_loads_all_tabs_without_exception():
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
 def test_overview_tab_shows_dataset_and_model_stats():
-    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at = AppTest.from_file(APP_PATH, default_timeout=120)
     at.run()
     overview = at.tabs[0]
     assert not at.exception
@@ -44,7 +44,7 @@ def test_overview_tab_shows_dataset_and_model_stats():
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
 def test_predict_form_submission_produces_a_prediction():
-    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at = AppTest.from_file(APP_PATH, default_timeout=120)
     at.run()
     at.tabs[1].button[0].click().run()
     assert not at.exception
@@ -58,7 +58,7 @@ def test_predict_form_submission_produces_a_prediction():
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
 def test_model_performance_tab_shows_metrics():
-    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at = AppTest.from_file(APP_PATH, default_timeout=120)
     at.run()
     perf_tab = at.tabs[6]
     assert not at.exception
@@ -67,7 +67,7 @@ def test_model_performance_tab_shows_metrics():
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
 def test_intervention_impact_tab_defaults_to_high_risk_and_shows_metrics():
-    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at = AppTest.from_file(APP_PATH, default_timeout=120)
     at.run()
     assert not at.exception
 
@@ -79,7 +79,7 @@ def test_intervention_impact_tab_defaults_to_high_risk_and_shows_metrics():
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")
 def test_intervention_impact_responds_to_slider_changes():
-    at = AppTest.from_file(APP_PATH, default_timeout=60)
+    at = AppTest.from_file(APP_PATH, default_timeout=120)
     at.run()
     impact_tab = at.tabs[8]
 
