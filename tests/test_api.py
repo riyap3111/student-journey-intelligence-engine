@@ -65,6 +65,11 @@ def test_model_info_matches_metadata(client):
     assert set(body["excluded_demographic_proxy_columns"]) == {
         "age_band", "gender", "first_gen_flag", "distance_from_campus_band"
     }
+    # Model-comparison fields (the frontend's Model Info page relies on these to show
+    # every candidate's validation metrics, not just the winner's).
+    assert body["model_type"] in body["validation_metrics_by_model"]
+    assert "roc_auc" in body["validation_metrics_by_model"][body["model_type"]]
+    assert "brier_score" in body["test_metrics_uncalibrated"]
 
 
 @pytest.mark.skipif(not MODEL_EXISTS, reason="No trained model; run `python -m student_journey.models.train`.")

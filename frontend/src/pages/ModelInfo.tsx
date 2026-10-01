@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, getModelInfo } from "../lib/api";
+import ConfusionMatrix from "../components/ConfusionMatrix";
+import ModelComparisonTable from "../components/ModelComparisonTable";
 import StatCard from "../components/StatCard";
 import type { ModelInfoResponse } from "../lib/types";
 
@@ -34,7 +36,7 @@ export default function ModelInfo() {
     return <div className="mx-auto max-w-5xl px-4 py-10 text-[var(--text-secondary)]">Loading model info…</div>;
   }
 
-  const metricEntries = Object.entries(info.test_metrics).filter(([k]) => k in METRIC_LABELS);
+  const metricEntries = Object.entries(info.test_metrics).filter(([k]) => k in METRIC_LABELS) as [string, number][];
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-10">
@@ -48,13 +50,44 @@ export default function ModelInfo() {
       </div>
 
       <div className="glass-panel p-5">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-          Held-out test metrics
+        <h2 className="mb-1 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+          Model comparison
         </h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {metricEntries.map(([key, value]) => (
-            <StatCard key={key} label={METRIC_LABELS[key]} value={Number(value).toFixed(3)} />
-          ))}
+        <p className="mb-4 text-xs text-[var(--text-muted)]">
+          Every model type is Optuna-tuned, then compared on this held-out validation set — the ensemble is
+          evaluated as one more candidate, not assumed to be the answer.
+        </p>
+        <ModelComparisonTable
+          validationMetricsByModel={info.validation_metrics_by_model}
+          bestHyperparameters={info.best_hyperparameters}
+          selectedModel={info.model_type}
+          ensembleMembers={info.ensemble_members}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="glass-panel p-5">
+          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+            Held-out test metrics
+          </h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {metricEntries.map(([key, value]) => (
+              <StatCard key={key} label={METRIC_LABELS[key]} value={Number(value).toFixed(3)} />
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-[var(--text-muted)]">
+            Brier score improved {info.test_metrics_uncalibrated.brier_score.toFixed(3)} →{" "}
+            {info.test_metrics.brier_score.toFixed(3)} after <code className="font-mono-ui">CalibratedClassifierCV</code>{" "}
+            — calibration is monotonic, so ranking (and these risk thresholds) are unaffected, only the predicted
+            probabilities' honesty.
+          </p>
+        </div>
+
+        <div className="glass-panel p-5">
+          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+            Confusion matrix (test set)
+          </h2>
+          <ConfusionMatrix matrix={info.test_metrics.confusion_matrix} />
         </div>
       </div>
 

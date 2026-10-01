@@ -152,6 +152,10 @@ def model_info(bundle: ModelBundle = Depends(get_model_bundle)) -> ModelInfoResp
         excluded_demographic_proxy_columns=metadata["excluded_demographic_proxy_columns"],
         risk_thresholds=metadata["risk_thresholds"],
         test_metrics=metadata["test_metrics"],
+        test_metrics_uncalibrated=metadata["test_metrics_uncalibrated"],
+        validation_metrics_by_model=metadata["validation_metrics_by_model"],
+        best_hyperparameters=metadata["best_hyperparameters"],
+        ensemble_members=metadata.get("ensemble_members"),
     )
 
 

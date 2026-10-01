@@ -63,6 +63,25 @@ export interface HealthResponse {
   model_version: string | null;
 }
 
+export interface ConfusionMatrix {
+  tn: number;
+  fp: number;
+  fn: number;
+  tp: number;
+}
+
+export interface ModelMetrics {
+  precision: number;
+  recall: number;
+  f1: number;
+  roc_auc: number;
+  average_precision: number;
+  brier_score: number;
+  confusion_matrix: ConfusionMatrix;
+  n_samples: number;
+  positive_rate: number;
+}
+
 export interface ModelInfoResponse {
   model_version: string;
   model_type: string;
@@ -70,7 +89,11 @@ export interface ModelInfoResponse {
   feature_columns: string[];
   excluded_demographic_proxy_columns: string[];
   risk_thresholds: { low_max: number; medium_max: number };
-  test_metrics: Record<string, number | Record<string, number>>;
+  test_metrics: ModelMetrics;
+  test_metrics_uncalibrated: ModelMetrics;
+  validation_metrics_by_model: Record<string, ModelMetrics>;
+  best_hyperparameters: Record<string, Record<string, number | string | null>>;
+  ensemble_members: string[] | null;
   disclaimer: string;
 }
 

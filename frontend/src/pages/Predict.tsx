@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { ApiError, predict } from "../lib/api";
+import CodeBlock from "../components/CodeBlock";
 import FactorBars from "../components/FactorBars";
 import RiskBadge from "../components/RiskBadge";
 import RiskGauge from "../components/RiskGauge";
+import { toCurl } from "../lib/curl";
 import { PROGRAMS, type PredictionResponse, type StudentTermFeatures } from "../lib/types";
 
 const DEFAULT_FEATURES: StudentTermFeatures = {
@@ -135,8 +137,11 @@ function CheckField({
 export default function Predict() {
   const [features, setFeatures] = useState<StudentTermFeatures>(DEFAULT_FEATURES);
   const [result, setResult] = useState<PredictionResponse | null>(null);
+  const [requestSent, setRequestSent] = useState<StudentTermFeatures | null>(null);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showInspector, setShowInspector] = useState(false);
 
   const set = <K extends keyof StudentTermFeatures>(key: K, value: StudentTermFeatures[K]) =>
     setFeatures((prev) => ({ ...prev, [key]: value }));
@@ -146,8 +151,12 @@ export default function Predict() {
     setLoading(true);
     setError(null);
     setResult(null);
+    const startedAt = performance.now();
     try {
-      setResult(await predict(features));
+      const response = await predict(features);
+      setLatencyMs(performance.now() - startedAt);
+      setRequestSent(features);
+      setResult(response);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Request failed. Is the API running?");
     } finally {
@@ -270,6 +279,12 @@ export default function Predict() {
                   <strong className="text-[var(--text-primary)]">{(result.risk_probability * 100).toFixed(1)}%</strong>
                 </span>
                 <span className="font-mono-ui text-xs text-[var(--text-muted)]">model {result.model_version}</span>
+                {latencyMs !== null && (
+                  <span className="font-mono-ui inline-flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                    <span className="h-1 w-1 rounded-full bg-[var(--cyan)]" />
+                    {latencyMs.toFixed(0)}ms
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -277,6 +292,27 @@ export default function Predict() {
             <h3 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">Top contributing factors</h3>
             <FactorBars factors={result.top_contributing_factors} scoreScale={result.score_scale} />
           </div>
+
+          <div className="border-t border-[var(--border-subtle)] pt-4">
+            <button
+              type="button"
+              onClick={() => setShowInspector((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)]"
+            >
+              <span className={`inline-block transition-transform ${showInspector ? "rotate-90" : ""}`}>›</span>
+              {showInspector ? "Hide" : "Show"} request/response details
+            </button>
+            {showInspector && requestSent && (
+              <div className="mt-3 space-y-3">
+                <CodeBlock label="curl" code={toCurl(requestSent)} />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <CodeBlock label="Request body" code={JSON.stringify(requestSent, null, 2)} />
+                  <CodeBlock label="Response body" code={JSON.stringify(result, null, 2)} />
+                </div>
+              </div>
+            )}
+          </div>
+
           <p className="border-t border-[var(--border-subtle)] pt-3 text-xs text-[var(--text-muted)]">{result.disclaimer}</p>
         </div>
       )}

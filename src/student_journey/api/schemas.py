@@ -143,6 +143,16 @@ class ModelInfoResponse(BaseModel):
     excluded_demographic_proxy_columns: list[str]
     risk_thresholds: dict
     test_metrics: dict
+    test_metrics_uncalibrated: dict = Field(
+        ..., description="Same metrics before CalibratedClassifierCV — shows the calibration fix's actual effect"
+    )
+    validation_metrics_by_model: dict = Field(
+        ..., description="Validation-set metrics for every model type compared during training, not just the winner"
+    )
+    best_hyperparameters: dict = Field(..., description="Optuna-selected hyperparameters per tuned model type")
+    ensemble_members: Optional[list[str]] = Field(
+        None, description="Which tuned models the soft-voting ensemble combines, if it was selected"
+    )
     disclaimer: str = API_DISCLAIMER
 
 
