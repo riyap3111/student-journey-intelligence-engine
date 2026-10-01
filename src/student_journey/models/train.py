@@ -245,7 +245,13 @@ def main() -> None:
     scale_pos_weight = neg / pos
     print(f"Train class balance: {pos} positive / {neg} negative (scale_pos_weight={scale_pos_weight:.3f})")
 
-    mlflow.set_tracking_uri(f"file:{MLRUNS_DIR}")
+    # A SQLite-backed store, not MLflow's plain filesystem ("file:") backend:
+    # newer MLflow versions put the filesystem store in maintenance mode and
+    # refuse to use it at all (raises MlflowException on set_experiment) —
+    # found when this ran in CI with a freshly-installed MLflow and failed,
+    # despite working locally against an older cached install. This is
+    # MLflow's own documented migration path, not a workaround.
+    mlflow.set_tracking_uri(f"sqlite:///{MLRUNS_DIR}/mlflow.db")
     mlflow.set_experiment("student_persistence")
 
     model_types = ["logistic_regression", "random_forest"]
