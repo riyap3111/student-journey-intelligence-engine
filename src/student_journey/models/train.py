@@ -60,6 +60,7 @@ import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.frozen import FrozenEstimator
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -364,10 +365,15 @@ def main() -> None:
     # probabilities shown but not the model's ranking — risk-category
     # percentile thresholds are unaffected (verified: Spearman rank
     # correlation between raw and calibrated probabilities is exactly 1.0).
+    # FrozenEstimator (sklearn's documented replacement for cv="prefit", added
+    # in 1.6) tells CalibratedClassifierCV to use best_pipeline exactly as
+    # already fitted, never refit it — cv="prefit" was deprecated as of 1.6
+    # and removed entirely in later releases (a real break found when this
+    # first ran in CI with a freshly-installed, newer scikit-learn than the
+    # cached local dev install).
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning)
-        warnings.filterwarnings("ignore", category=FutureWarning)  # cv="prefit" deprecation (see comment above)
-        calibrated_pipeline = CalibratedClassifierCV(best_pipeline, method="sigmoid", cv="prefit")
+        calibrated_pipeline = CalibratedClassifierCV(FrozenEstimator(best_pipeline), method="sigmoid")
         calibrated_pipeline.fit(X_val, y_val)
         val_prob = calibrated_pipeline.predict_proba(X_val)[:, 1]
         test_prob = calibrated_pipeline.predict_proba(X_test)[:, 1]
